@@ -31,14 +31,24 @@ uploadArea.addEventListener('drop', (e) => {
     e.preventDefault();
     uploadArea.classList.remove('dragover');
     const files = e.dataTransfer.files;
-    if (files.length > 0 && files[0].type === 'application/pdf') {
-        handleFile(files[0]);
+    if (files.length > 0) {
+        if (files[0].type === 'application/pdf') {
+            handleFile(files[0]);
+        } else {
+            alert('Please select a PDF file.');
+        }
     }
 });
 
 fileInput.addEventListener('change', (e) => {
     if (e.target.files.length > 0) {
-        handleFile(e.target.files[0]);
+        const file = e.target.files[0];
+        if (file.type === 'application/pdf') {
+            handleFile(file);
+        } else {
+            alert('Please select a PDF file.');
+            e.target.value = ''; // Clear the invalid selection
+        }
     }
 });
 
