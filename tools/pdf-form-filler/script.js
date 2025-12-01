@@ -227,6 +227,9 @@ function createFormField(fieldInfo) {
             
             radioDiv.appendChild(radioInput);
             radioDiv.appendChild(radioLabel);
+            radioWrapper.appendChild(radioDiv);
+        });
+        
         fieldDiv.appendChild(radioWrapper);
         formFieldsContainer.appendChild(fieldDiv);
         return;
@@ -236,9 +239,6 @@ function createFormField(fieldInfo) {
     if (input) {
         fieldDiv.appendChild(input);
     }
-    
-    formFieldsContainer.appendChild(fieldDiv);
-}   }
     
     formFieldsContainer.appendChild(fieldDiv);
 }
