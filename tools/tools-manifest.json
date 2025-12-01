@@ -22,5 +22,17 @@
       "Python",
       "PDF.js"
     ]
+  },
+  {
+    "id": "pdf-form-filler",
+    "name": "PDF Form Filler",
+    "description": "Upload a PDF form, fill out the fields in your browser, and download the completed PDF",
+    "icon": "assets/icons/file-text.svg",
+    "category": "PDF Tools",
+    "technologies": [
+      "PDF.js",
+      "pdf-lib",
+      "JavaScript"
+    ]
   }
 ]
