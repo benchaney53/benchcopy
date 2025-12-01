@@ -95,9 +95,13 @@ async function extractFormFields() {
     
     fieldCount.textContent = fields.length;
     
+    console.log(`Found ${fields.length} fields`);
+    
     for (const field of fields) {
         const fieldName = field.getName();
         const fieldType = field.constructor.name;
+        
+        console.log(`Processing field: ${fieldName}, Type: ${fieldType}`);
         
         let fieldInfo = {
             name: fieldName,
@@ -107,22 +111,38 @@ async function extractFormFields() {
         };
         
         // Get current value based on field type
-        if (fieldType === 'PDFTextField') {
-            fieldInfo.value = field.getText() || '';
-            fieldInfo.isMultiline = field.isMultiline();
-        } else if (fieldType === 'PDFCheckBox') {
-            fieldInfo.value = field.isChecked();
-        } else if (fieldType === 'PDFDropdown') {
-            fieldInfo.value = field.getSelected() || [];
-            fieldInfo.options = field.getOptions();
-        } else if (fieldType === 'PDFRadioGroup') {
-            fieldInfo.value = field.getSelected();
-            fieldInfo.options = field.getOptions();
+        try {
+            if (fieldType === 'PDFTextField') {
+                fieldInfo.value = field.getText() || '';
+                fieldInfo.isMultiline = field.isMultiline();
+            } else if (fieldType === 'PDFCheckBox') {
+                fieldInfo.value = field.isChecked();
+            } else if (fieldType === 'PDFDropdown') {
+                fieldInfo.value = field.getSelected() || [];
+                fieldInfo.options = field.getOptions();
+            } else if (fieldType === 'PDFRadioGroup') {
+                fieldInfo.value = field.getSelected();
+                fieldInfo.options = field.getOptions();
+            } else {
+                console.warn(`Unknown field type: ${fieldType} for field: ${fieldName}`);
+                // Treat unknown types as text fields
+                fieldInfo.value = '';
+            }
+        } catch (error) {
+            console.error(`Error reading field ${fieldName}:`, error);
+            fieldInfo.value = '';
         }
         
         formFields.push(fieldInfo);
-        createFormField(fieldInfo);
+        
+        try {
+            createFormField(fieldInfo);
+        } catch (error) {
+            console.error(`Error creating UI for field ${fieldName}:`, error);
+        }
     }
+    
+    console.log(`Created ${formFieldsContainer.children.length} form field elements`);
 }
 
 function createFormField(fieldInfo) {
@@ -245,11 +265,17 @@ function createFormField(fieldInfo) {
         return;
     }
     
-    // This should never be reached now, but keep as fallback
-    if (input) {
-        fieldDiv.appendChild(input);
-    }
-    
+    // Fallback for unknown field types - treat as text input
+    console.log(`Creating fallback text input for field: ${fieldInfo.name}, type: ${fieldInfo.type}`);
+    input = document.createElement('input');
+    input.type = 'text';
+    input.value = fieldInfo.value || '';
+    input.dataset.fieldName = fieldInfo.name;
+    input.addEventListener('input', (e) => {
+        const field = formFields.find(f => f.name === e.target.dataset.fieldName);
+        if (field) field.value = e.target.value;
+    });
+    fieldDiv.appendChild(input);
     formFieldsContainer.appendChild(fieldDiv);
 }
 
