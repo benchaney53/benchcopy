@@ -1,0 +1,265 @@
+/* Sidebar Navigation Styles */
+
+.bench-menu-btn {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    width: 50px;
+    height: 50px;
+    background: rgba(255, 255, 255, 0.2);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    z-index: 999;
+    padding: 0;
+}
+
+.bench-menu-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(1.05);
+}
+
+.bench-menu-btn i {
+    font-size: 24px;
+    color: white;
+}
+
+body.light-mode .bench-menu-btn {
+    background: rgba(0, 0, 0, 0.1);
+    border: 2px solid rgba(0, 0, 0, 0.2);
+}
+
+body.light-mode .bench-menu-btn:hover {
+    background: rgba(0, 0, 0, 0.15);
+}
+
+body.light-mode .bench-menu-btn i {
+    color: #2c3e50;
+}
+
+.bench-sidebar {
+    position: fixed;
+    top: 0;
+    left: -300px;
+    width: 300px;
+    height: 100vh;
+    background: #2a2a2a;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.3);
+    transition: left 0.3s ease;
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.bench-sidebar.open {
+    left: 0;
+}
+
+body.light-mode .bench-sidebar {
+    background: #ffffff;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.sidebar-header {
+    padding: 20px;
+    border-bottom: 1px solid #404040;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+}
+
+body.light-mode .sidebar-header {
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.sidebar-wrench-icon {
+    position: absolute;
+    left: 20px;
+    font-size: 24px;
+    color: #f0f0f0;
+}
+
+body.light-mode .sidebar-wrench-icon {
+    color: #2c3e50;
+}
+
+.sidebar-header h3 {
+    margin: 0;
+    color: #f0f0f0;
+    font-size: 24px;
+    font-weight: 600;
+}
+
+body.light-mode .sidebar-header h3 {
+    color: #2c3e50;
+}
+
+.sidebar-close {
+    position: absolute;
+    right: 20px;
+    background: none;
+    border: none;
+    color: #f0f0f0;
+    font-size: 32px;
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.sidebar-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+body.light-mode .sidebar-close {
+    color: #2c3e50;
+}
+
+body.light-mode .sidebar-close:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.sidebar-nav {
+    padding: 10px;
+    flex: 1;
+}
+
+.sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    color: #e0e0e0;
+    text-decoration: none;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+    margin-bottom: 4px;
+    font-size: 15px;
+    position: relative;
+}
+
+.sidebar-link:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+}
+
+body.light-mode .sidebar-link {
+    color: #333;
+}
+
+body.light-mode .sidebar-link:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: #000;
+}
+
+.sidebar-icon {
+    width: 20px;
+    font-size: 20px;
+    flex-shrink: 0;
+    text-align: center;
+}
+
+.sidebar-chevron {
+    font-size: 16px;
+    margin-left: auto;
+    transition: transform 0.2s ease;
+}
+
+.sidebar-tools-toggle.active .sidebar-chevron {
+    transform: rotate(180deg);
+}
+
+.sidebar-submenu {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+    margin-left: 16px;
+}
+
+.sidebar-submenu.open {
+    max-height: 500px;
+}
+
+.sidebar-sublink {
+    padding-left: 32px;
+    font-size: 14px;
+}
+
+.bench-sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    z-index: 1000;
+}
+
+.bench-sidebar-overlay.visible {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .bench-sidebar {
+        width: 80%;
+        max-width: 300px;
+        left: -100%;
+    }
+    
+    .bench-menu-btn {
+        width: 45px;
+        height: 45px;
+    }
+    
+    .bench-menu-btn svg {
+        width: 20px;
+        height: 20px;
+    }
+}
+
+/* Smooth scrollbar for sidebar */
+.bench-sidebar::-webkit-scrollbar {
+    width: 8px;
+}
+
+.bench-sidebar::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+body.light-mode .bench-sidebar::-webkit-scrollbar-track {
+    background: #f5f5f5;
+}
+
+.bench-sidebar::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 4px;
+}
+
+body.light-mode .bench-sidebar::-webkit-scrollbar-thumb {
+    background: #ccc;
+}
+
+.bench-sidebar::-webkit-scrollbar-thumb:hover {
+    background: #666;
+}
+
+body.light-mode .bench-sidebar::-webkit-scrollbar-thumb:hover {
+    background: #aaa;
+}

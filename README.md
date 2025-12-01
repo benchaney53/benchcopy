@@ -5,6 +5,32 @@ A website repo that stores all the in-browser tools I've developed so far
 
 Bench is a dynamic landing page that showcases a collection of browser-based tools. All tools run entirely client-side, requiring no server-side processing.
 
+## Local Development
+
+To test the bench tools locally, you need to run a local web server to avoid CORS issues with the file:// protocol.
+
+### Quick Start (Windows)
+
+1. **Double-click `START_SERVER.bat`** - This will start the server and open your browser automatically
+2. The site will open at `http://localhost:8000/`
+3. Press any key in the console window to stop the server when done
+
+### Manual Start
+
+Alternatively, run from the command line:
+
+```bash
+# Using Python (works on any platform)
+python serve.py
+
+# Or on Windows
+serve.bat
+```
+
+Then open your browser to `http://localhost:8000/`
+
+**Note:** Don't open `index.html` directly in your browser - the CORS policy will block loading of tools. Always use the local server for testing.
+
 ## Features
 
 - **Dynamic Tool Discovery**: Automatically loads and displays tools from the `/tools` directory
@@ -26,17 +52,33 @@ bench/
 
 ## Available Tools
 
-### Python File Processor
+Currently available tools are dynamically loaded from the tools manifest.
 
-Upload and analyze text files using Python running directly in your browser via PyScript/Pyodide.
+## Sidebar Navigation
 
-**Features:**
-- File Upload: Drag & drop or click to upload text files
-- Python Processing: Files are processed using Python via [PyScript](https://pyscript.net/)
-- File Analysis: Provides statistics like line count, word count, character count
-- Format-specific Analysis: Special handling for JSON, CSV, and Python files
-- Word Frequency: Shows the top 10 most common words
-- Download Results: Export the processed output as a text file
+All tools in the bench collection include a built-in sidebar navigation for easy access to:
+- Home page
+- All available tools (dynamically loaded)
+- About section
+- GitHub repository
+- Contact information
+
+### Adding Sidebar to Your Tool
+
+Simply include one script tag in your HTML file before the closing `</body>` tag:
+
+```html
+<!-- Sidebar Navigation - Just add this one line! -->
+<script src="../../assets/sidebar.js"></script>
+```
+
+The sidebar will:
+- Automatically inject itself into the page
+- Load its own CSS styles
+- Detect the current page location and adjust links accordingly
+- Dynamically populate the tools list from the manifest
+
+**No configuration needed** - it works out of the box!
 
 ## How It Works
 

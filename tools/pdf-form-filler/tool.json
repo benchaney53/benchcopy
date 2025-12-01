@@ -2,7 +2,7 @@
   "id": "pdf-form-filler",
   "name": "PDF Form Filler",
   "description": "Upload a PDF form, fill out the fields in your browser, and download the completed PDF",
-  "icon": "assets/icons/file-text.svg",
+  "icon": "<i class=\"fa-solid fa-file-pdf\"></i>",
   "category": "PDF Tools",
   "technologies": ["PDF.js", "pdf-lib", "JavaScript"]
 }

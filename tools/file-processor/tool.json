@@ -1,8 +1,0 @@
-{
-  "id": "file-processor",
-  "name": "Python File Processor",
-  "description": "Upload and analyze text files using Python in the browser",
-  "icon": "assets/icons/python.svg",
-  "category": "File Tools",
-  "technologies": ["PyScript", "Python", "WebAssembly"]
-}

@@ -1,21 +1,9 @@
 [
   {
-    "id": "file-processor",
-    "name": "Python File Processor",
-    "description": "Upload and analyze text files using Python in the browser",
-    "icon": "assets/icons/python.svg",
-    "category": "File Tools",
-    "technologies": [
-      "PyScript",
-      "Python",
-      "WebAssembly"
-    ]
-  },
-  {
     "id": "pdf-form-checker",
     "name": "PDF Form Field Checker",
     "description": "Compare PDF form fields between a control PDF and review PDFs to identify mismatches",
-    "icon": "assets/icons/clipboard.svg",
+    "icon": "<i class=\"fa-solid fa-file-pdf\"></i>",
     "category": "PDF Tools",
     "technologies": [
       "PyScript",
@@ -27,7 +15,7 @@
     "id": "pdf-form-filler",
     "name": "PDF Form Filler",
     "description": "Upload a PDF form, fill out the fields in your browser, and download the completed PDF",
-    "icon": "assets/icons/file-text.svg",
+    "icon": "<i class=\"fa-solid fa-file-pdf\"></i>",
     "category": "PDF Tools",
     "technologies": [
       "PDF.js",

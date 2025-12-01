@@ -2,7 +2,7 @@
   "id": "pdf-form-checker",
   "name": "PDF Form Field Checker",
   "description": "Compare PDF form fields between a control PDF and review PDFs to identify mismatches",
-  "icon": "assets/icons/clipboard.svg",
+  "icon": "<i class=\"fa-solid fa-file-pdf\"></i>",
   "category": "PDF Tools",
   "technologies": ["PyScript", "Python", "PDF.js"]
 }

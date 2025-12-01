@@ -81,7 +81,8 @@
         h1 {
             color: #f0f0f0;
             text-align: center;
-            margin-bottom: 10px;
+            margin-bottom: 5px;
+            margin-top: 10px;
         }
         body.light-mode h1 {
             color: #333;
@@ -89,7 +90,8 @@
         .description {
             text-align: center;
             color: #b0b0b0;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
+            margin-top: 5px;
         }
         body.light-mode .description {
             color: #666;
@@ -170,24 +172,30 @@
             display: block;
         }
         .btn {
-            background-color: #555;
+            background-color: #6a6a6a;
             color: white;
-            padding: 12px 24px;
+            padding: 14px 28px;
             border: none;
             border-radius: 6px;
             cursor: pointer;
-            font-size: 16px;
+            font-size: 17px;
+            font-weight: 600;
             margin: 5px;
-            transition: background-color 0.3s;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         }
         body.light-mode .btn {
-            background-color: #007bff;
+            background-color: #0056b3;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
         }
         .btn:hover {
-            background-color: #666;
+            background-color: #7a7a7a;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.4);
         }
         body.light-mode .btn:hover {
-            background-color: #0056b3;
+            background-color: #004085;
+            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.2);
         }
         .btn:disabled {
             background-color: #444;
@@ -199,16 +207,20 @@
             opacity: 1;
         }
         .btn-success {
-            background-color: #4a7856;
+            background-color: #5a9068;
+            box-shadow: 0 4px 8px rgba(90, 144, 104, 0.4);
         }
         body.light-mode .btn-success {
-            background-color: #28a745;
+            background-color: #1e7e34;
+            box-shadow: 0 4px 8px rgba(30, 126, 52, 0.3);
         }
         .btn-success:hover {
-            background-color: #5a8a67;
+            background-color: #6aa078;
+            box-shadow: 0 6px 10px rgba(90, 144, 104, 0.5);
         }
         body.light-mode .btn-success:hover {
-            background-color: #1e7e34;
+            background-color: #155724;
+            box-shadow: 0 6px 10px rgba(30, 126, 52, 0.4);
         }
         .button-group {
             text-align: center;
@@ -373,7 +385,7 @@
         <span class="theme-toggle-text" id="theme-text">Light</span>
     </div>
 
-    <a href="../../index.html" class="back-link">&larr; Back to Tools</a>
+    <a href="../../home.html" class="back-link">&larr; Back to Tools</a>
     
     <h1>PDF Form Field Checker</h1>
     <p class="description">Compare form fields between a control PDF and review PDFs to identify mismatches</p>
@@ -382,7 +394,7 @@
         <div class="upload-section">
             <h2>1. Select Control PDF</h2>
             <div class="upload-area" id="control-upload">
-                <p><img src="../../assets/icons/file.svg" alt="" style="width: 32px; height: 32px; vertical-align: middle; stroke: #666;"> Click or drag & drop your control PDF here</p>
+                <p><i class="fas fa-file-pdf" style="font-size: 32px; margin-right: 8px; vertical-align: middle;"></i> Click or drag & drop your control PDF here</p>
                 <input type="file" id="control-input" accept=".pdf">
             </div>
             <div id="control-info" class="file-info">
@@ -393,7 +405,7 @@
         <div class="upload-section">
             <h2>2. Select Review PDFs</h2>
             <div class="upload-area" id="review-upload">
-                <p><img src="../../assets/icons/file.svg" alt="" style="width: 32px; height: 32px; vertical-align: middle; stroke: #666;"> Click or drag & drop review PDF(s) here</p>
+                <p><i class="fas fa-file-pdf" style="font-size: 32px; margin-right: 8px; vertical-align: middle;"></i> Click or drag & drop review PDF(s) here</p>
                 <p style="color: #888; font-size: 14px;">You can select multiple files</p>
                 <input type="file" id="review-input" accept=".pdf" multiple>
             </div>
@@ -451,5 +463,8 @@
             }
         }
     </script>
+    
+    <!-- Sidebar Navigation -->
+    <script src="../../assets/sidebar.js"></script>
 </body>
 </html>

@@ -3,7 +3,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 
 let uploadedPdfBytes = null;
 let pdfDoc = null;
+let pdfJsDoc = null;
 let formFields = [];
+let originalFormFields = [];
 
 // Upload handling
 const uploadArea = document.getElementById('upload-area');
@@ -73,6 +75,9 @@ async function handleFile(file) {
         // Load PDF with pdf-lib
         pdfDoc = await PDFLib.PDFDocument.load(uploadedPdfBytes);
         
+        // Load PDF with PDF.js for rendering
+        pdfJsDoc = await pdfjsLib.getDocument({ data: uploadedPdfBytes }).promise;
+        
         // Extract form fields
         await extractFormFields();
         
@@ -107,27 +112,112 @@ async function extractFormFields() {
             name: fieldName,
             type: fieldType,
             field: field,
-            value: null
+            value: null,
+            pageNumber: null,
+            rect: null
         };
+        
+        // Try to get the page number and position for this field
+        try {
+            const acroField = field.acroField;
+            if (acroField && acroField.dict) {
+                const pageRef = acroField.dict.get(PDFLib.PDFName.of('P'));
+                if (pageRef) {
+                    const pages = pdfDoc.getPages();
+                    const pageIndex = pages.findIndex(p => p.ref === pageRef);
+                    if (pageIndex !== -1) {
+                        fieldInfo.pageNumber = pageIndex + 1; // 1-based
+                    }
+                }
+            }
+            // Fallback: check widget annotations and get rectangle
+            if (!fieldInfo.pageNumber) {
+                const pages = pdfDoc.getPages();
+                for (let i = 0; i < pages.length; i++) {
+                    const annotations = pages[i].node.Annots();
+                    if (annotations) {
+                        const annots = annotations.asArray();
+                        for (const annot of annots) {
+                            const annotDict = annot instanceof PDFLib.PDFDict ? annot : null;
+                            if (annotDict) {
+                                const t = annotDict.get(PDFLib.PDFName.of('T'));
+                                if (t && t.toString().includes(fieldName)) {
+                                    fieldInfo.pageNumber = i + 1;
+                                    // Get field rectangle
+                                    const rect = annotDict.get(PDFLib.PDFName.of('Rect'));
+                                    if (rect) {
+                                        fieldInfo.rect = rect.asRectangle();
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        if (fieldInfo.pageNumber) break;
+                    }
+                }
+            }
+            
+            // Try to get rectangle from widgets if not found
+            if (!fieldInfo.rect && field.acroField) {
+                try {
+                    const widgets = field.acroField.getWidgets();
+                    if (widgets && widgets.length > 0) {
+                        const widget = widgets[0];
+                        const rect = widget.dict.get(PDFLib.PDFName.of('Rect'));
+                        if (rect) {
+                            fieldInfo.rect = rect.asRectangle();
+                        }
+                    }
+                } catch (e) {
+                    // Ignore
+                }
+            }
+        } catch (err) {
+            console.warn(`Could not determine page for field ${fieldName}:`, err);
+        }
         
         // Get current value based on field type
         try {
             // Check if it's a text field (type 'r' or 'PDFTextField')
             if (fieldType === 'PDFTextField' || fieldType === 'r') {
-                if (typeof field.isMultiline === 'function') {
-                    fieldInfo.type = 'PDFTextField';
+                fieldInfo.type = 'PDFTextField';
+                
+                // Try multiple methods to extract the value
+                if (typeof field.getText === 'function') {
                     fieldInfo.value = field.getText() || '';
+                } else if (typeof field.getValue === 'function') {
+                    fieldInfo.value = field.getValue() || '';
+                } else if (field.value !== undefined) {
+                    fieldInfo.value = field.value || '';
+                } else {
+                    fieldInfo.value = '';
+                }
+                
+                // Check if multiline
+                if (typeof field.isMultiline === 'function') {
                     fieldInfo.isMultiline = field.isMultiline();
                 } else {
-                    // Abbreviated type 'r' - treat as text field
-                    fieldInfo.type = 'PDFTextField';
-                    fieldInfo.value = field.getText ? (field.getText() || '') : '';
                     fieldInfo.isMultiline = false;
                 }
+                
+                console.log(`Field ${fieldName} (type ${fieldType}) extracted value:`, fieldInfo.value);
+                
             } else if (fieldType === 'PDFCheckBox' || fieldType === 'e') {
                 // Type 'e' is checkbox
                 fieldInfo.type = 'PDFCheckBox';
-                fieldInfo.value = field.isChecked ? field.isChecked() : false;
+                
+                if (typeof field.isChecked === 'function') {
+                    fieldInfo.value = field.isChecked();
+                } else if (typeof field.getValue === 'function') {
+                    fieldInfo.value = !!field.getValue();
+                } else if (field.value !== undefined) {
+                    fieldInfo.value = !!field.value;
+                } else {
+                    fieldInfo.value = false;
+                }
+                
+                console.log(`Field ${fieldName} (type ${fieldType}) checked:`, fieldInfo.value);
+                
             } else if (fieldType === 'PDFDropdown') {
                 fieldInfo.value = field.getSelected() || [];
                 fieldInfo.options = field.getOptions();
@@ -136,9 +226,15 @@ async function extractFormFields() {
                 fieldInfo.options = field.getOptions();
             } else {
                 console.warn(`Unknown field type: ${fieldType} for field: ${fieldName}`);
-                // Treat unknown types as text fields
+                // Treat unknown types as text fields and try to extract value
                 fieldInfo.type = 'PDFTextField';
-                fieldInfo.value = '';
+                if (typeof field.getValue === 'function') {
+                    fieldInfo.value = field.getValue() || '';
+                } else if (field.value !== undefined) {
+                    fieldInfo.value = field.value || '';
+                } else {
+                    fieldInfo.value = '';
+                }
             }
         } catch (error) {
             console.error(`Error reading field ${fieldName}:`, error);
@@ -155,16 +251,203 @@ async function extractFormFields() {
         }
     }
     
+    // Sort fields by page number, then Y position (top to bottom), then X position (left to right)
+    formFields.sort((a, b) => {
+        // First sort by page number
+        if (a.pageNumber !== b.pageNumber) {
+            return (a.pageNumber || 999) - (b.pageNumber || 999);
+        }
+        
+        // Then by Y position (PDF coordinates are bottom-up, so we reverse for top-to-bottom reading order)
+        if (a.rect && b.rect) {
+            // Higher Y values in PDF = higher on page, so reverse for reading order (top to bottom)
+            const yDiff = (b.rect.y || 0) - (a.rect.y || 0);
+            if (Math.abs(yDiff) > 5) { // 5 point tolerance for "same line"
+                return yDiff;
+            }
+            // If on same horizontal line, sort by X position (left to right)
+            return (a.rect.x || 0) - (b.rect.x || 0);
+        }
+        
+        return 0;
+    });
+    
+    // Clear and re-render fields in sorted order
+    formFieldsContainer.innerHTML = '';
+    formFields.forEach(fieldInfo => {
+        try {
+            createFormField(fieldInfo);
+        } catch (error) {
+            console.error(`Error creating UI for field ${fieldInfo.name}:`, error);
+        }
+    });
+    
+    // Save original values for reset functionality
+    originalFormFields = JSON.parse(JSON.stringify(formFields.map(f => ({
+        name: f.name,
+        value: f.value,
+        type: f.type
+    }))));
+    
     console.log(`Created ${formFieldsContainer.children.length} form field elements`);
+}
+
+// Show page reference modal
+async function showPageReference(pageNumber, fieldName, rect) {
+    // Get current theme colors
+    const isLightMode = document.body.classList.contains('light-mode');
+    const cardBg = isLightMode ? 'white' : '#3a3a3a';
+    const textColor = isLightMode ? '#333' : '#e0e0e0';
+    const borderColor = isLightMode ? '#ddd' : '#555';
+    
+    // Create modal
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 1000; overflow: hidden;';
+    
+    const modalContent = document.createElement('div');
+    modalContent.style.cssText = `background: ${cardBg}; padding: 20px; border-radius: 8px; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; position: relative;`;
+    
+    const header = document.createElement('div');
+    header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-shrink: 0;';
+    
+    const title = document.createElement('h3');
+    title.textContent = `Page ${pageNumber} - ${fieldName}`;
+    title.style.cssText = `margin: 0; color: ${textColor};`;
+    
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '✕';
+    closeBtn.style.cssText = `background: none; border: none; font-size: 24px; cursor: pointer; color: ${textColor}; padding: 0; width: 32px; height: 32px;`;
+    closeBtn.addEventListener('click', () => document.body.removeChild(modal));
+    
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+    modalContent.appendChild(header);
+    
+    const canvasContainer = document.createElement('div');
+    canvasContainer.style.cssText = 'position: relative; overflow: auto; flex: 1; min-height: 0;';
+    
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = `max-width: 100%; height: auto; border: 1px solid ${borderColor}; display: block;`;
+    canvasContainer.appendChild(canvas);
+    
+    modalContent.appendChild(canvasContainer);
+    modal.appendChild(modalContent);
+    document.body.appendChild(modal);
+    
+    // Prevent body scroll when modal is open
+    document.body.style.overflow = 'hidden';
+    
+    // Close on background click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            document.body.style.overflow = '';
+            document.body.removeChild(modal);
+        }
+    });
+    
+    // Restore body scroll on close button
+    closeBtn.addEventListener('click', () => {
+        document.body.style.overflow = '';
+    });
+    
+    // Render the page
+    try {
+        const page = await pdfJsDoc.getPage(pageNumber);
+        const scale = 1.5;
+        const viewport = page.getViewport({ scale });
+        
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        
+        const context = canvas.getContext('2d');
+        await page.render({
+            canvasContext: context,
+            viewport: viewport
+        }).promise;
+        
+        // Draw red rectangle around the field if we have coordinates
+        if (rect) {
+            const pageHeight = viewport.height / scale;
+            
+            // PDF coordinates are from bottom-left, canvas is from top-left
+            const x = rect.x * scale;
+            const y = (pageHeight - rect.y - rect.height) * scale;
+            const width = rect.width * scale;
+            const height = rect.height * scale;
+            
+            context.strokeStyle = 'red';
+            context.lineWidth = 3;
+            context.strokeRect(x, y, width, height);
+            
+            // Add a semi-transparent red overlay
+            context.fillStyle = 'rgba(255, 0, 0, 0.1)';
+            context.fillRect(x, y, width, height);
+        }
+    } catch (error) {
+        console.error('Error rendering page:', error);
+        alert('Error loading page preview');
+        document.body.removeChild(modal);
+    }
 }
 
 function createFormField(fieldInfo) {
     const fieldDiv = document.createElement('div');
     fieldDiv.className = 'form-field';
     
-    const label = document.createElement('label');
-    label.textContent = fieldInfo.name;
-    fieldDiv.appendChild(label);
+    const labelRow = document.createElement('div');
+    labelRow.style.display = 'flex';
+    labelRow.style.justifyContent = 'space-between';
+    labelRow.style.alignItems = 'center';
+    labelRow.style.marginBottom = '4px';
+    
+    // Field name label
+    const fieldLabel = document.createElement('label');
+    fieldLabel.textContent = fieldInfo.name;
+    fieldLabel.style.fontWeight = '600';
+    fieldLabel.style.fontSize = '14px';
+    labelRow.appendChild(fieldLabel);
+    
+    // Action buttons container
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'field-actions';
+    
+    // Add reference button if we have a page number
+    if (fieldInfo.pageNumber) {
+        const refBtn = document.createElement('button');
+        refBtn.textContent = `Reference: Page ${fieldInfo.pageNumber}`;
+        refBtn.className = 'ref-btn';
+        refBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            showPageReference(fieldInfo.pageNumber, fieldInfo.name, fieldInfo.rect);
+        });
+        actionsDiv.appendChild(refBtn);
+    }
+    
+    // Add delete button
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.className = 'delete-field-btn';
+    deleteBtn.dataset.fieldName = fieldInfo.name;
+    deleteBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (confirm(`Are you sure you want to delete the field "${fieldInfo.name}"?`)) {
+            // Mark field as deleted
+            const field = formFields.find(f => f.name === fieldInfo.name);
+            if (field) {
+                field.deleted = true;
+            }
+            // Remove the field div from DOM
+            fieldDiv.remove();
+            // Update field count
+            const activeFields = formFields.filter(f => !f.deleted).length;
+            fieldCount.textContent = activeFields;
+        }
+    });
+    actionsDiv.appendChild(deleteBtn);
+    
+    labelRow.appendChild(actionsDiv);
+    
+    fieldDiv.appendChild(labelRow);
     
     let input;
     
@@ -292,13 +575,72 @@ function createFormField(fieldInfo) {
     formFieldsContainer.appendChild(fieldDiv);
 }
 
-// Reset form
-document.getElementById('reset-btn').addEventListener('click', async () => {
-    if (confirm('Are you sure you want to reset all fields to their original values?')) {
-        await extractFormFields();
+// Clear form
+document.getElementById('clear-btn').addEventListener('click', () => {
+    if (confirm('Are you sure you want to clear all field values?')) {
+        formFields.forEach(fieldInfo => {
+            if (fieldInfo.type === 'PDFTextField') {
+                fieldInfo.value = '';
+            } else if (fieldInfo.type === 'PDFCheckBox') {
+                fieldInfo.value = false;
+            } else if (fieldInfo.type === 'PDFDropdown') {
+                fieldInfo.value = [];
+            } else if (fieldInfo.type === 'PDFRadioGroup') {
+                fieldInfo.value = '';
+            }
+        });
+        
+        // Update UI - only clear value inputs, not field name inputs
+        document.querySelectorAll('.form-field input[data-field-name], .form-field textarea[data-field-name]').forEach(input => {
+            input.value = '';
+        });
+        document.querySelectorAll('.form-field input[type="checkbox"]').forEach(checkbox => {
+            checkbox.checked = false;
+        });
+        document.querySelectorAll('.form-field select').forEach(select => {
+            select.selectedIndex = 0;
+        });
+        document.querySelectorAll('.form-field input[type="radio"]').forEach(radio => {
+            radio.checked = false;
+        });
     }
 });
 
+// Reset form
+document.getElementById('reset-btn').addEventListener('click', () => {
+    if (confirm('Are you sure you want to reset all fields to their original values?')) {
+        // Restore original values
+        formFields.forEach(fieldInfo => {
+            const original = originalFormFields.find(f => f.name === fieldInfo.name);
+            if (original) {
+                fieldInfo.value = original.value;
+            }
+        });
+        
+        // Update UI
+        formFields.forEach(fieldInfo => {
+            if (fieldInfo.type === 'PDFTextField') {
+                const input = document.querySelector(`.form-field input[data-field-name="${fieldInfo.name}"], .form-field textarea[data-field-name="${fieldInfo.name}"]`);
+                if (input) input.value = fieldInfo.value;
+            } else if (fieldInfo.type === 'PDFCheckBox') {
+                const checkbox = document.querySelector(`.form-field input[type="checkbox"][data-field-name="${fieldInfo.name}"]`);
+                if (checkbox) checkbox.checked = fieldInfo.value;
+            } else if (fieldInfo.type === 'PDFDropdown') {
+                const select = document.querySelector(`.form-field select[data-field-name="${fieldInfo.name}"]`);
+                if (select && fieldInfo.value.length > 0) {
+                    select.value = fieldInfo.value[0];
+                } else if (select) {
+                    select.selectedIndex = 0;
+                }
+            } else if (fieldInfo.type === 'PDFRadioGroup') {
+                const radios = document.querySelectorAll(`.form-field input[type="radio"][data-field-name="${fieldInfo.name}"]`);
+                radios.forEach(radio => {
+                    radio.checked = radio.value === fieldInfo.value;
+                });
+            }
+        });
+    }
+});
 // Download filled PDF
 document.getElementById('download-btn').addEventListener('click', async () => {
     try {
@@ -306,8 +648,22 @@ document.getElementById('download-btn').addEventListener('click', async () => {
         
         const form = pdfDoc.getForm();
         
-        // Apply all field values
+        // First, remove deleted fields from the PDF
         for (const fieldInfo of formFields) {
+            if (fieldInfo.deleted) {
+                try {
+                    form.removeField(fieldInfo.field);
+                    console.log(`Removed field: ${fieldInfo.name}`);
+                } catch (error) {
+                    console.error(`Error removing field ${fieldInfo.name}:`, error);
+                }
+            }
+        }
+        
+        // Apply all field values for non-deleted fields
+        for (const fieldInfo of formFields) {
+            if (fieldInfo.deleted) continue; // Skip deleted fields
+            
             try {
                 if (fieldInfo.type === 'PDFTextField') {
                     fieldInfo.field.setText(fieldInfo.value);
