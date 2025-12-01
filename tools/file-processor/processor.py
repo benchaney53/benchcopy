@@ -98,40 +98,34 @@ def process_file(content: str, filename: str) -> str:
     
     # Word frequency analysis
     result.append("\n" + "-" * 50)
-    result.append("📈 TOP 10 MOST COMMON WORDS")
+    result.append("📈 WORD FREQUENCY (Top 10)")
     result.append("-" * 50)
     
-    # Simple word frequency using list comprehension
+    # Simple word frequency counter
     words = content.lower().split()
-    cleaned_words = [
-        ''.join(c for c in word if c.isalnum())
-        for word in words
-    ]
-    cleaned_words = [w for w in cleaned_words if w and len(w) > 2]
-    
     word_freq = {}
-    for word in cleaned_words:
-        word_freq[word] = word_freq.get(word, 0) + 1
+    for word in words:
+        # Remove common punctuation
+        word = word.strip('.,;:!?"\'()[]{}')
+        if word and len(word) > 2:  # Only words longer than 2 chars
+            word_freq[word] = word_freq.get(word, 0) + 1
     
     # Sort by frequency
     sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:10]
-    for i, (word, freq) in enumerate(sorted_words, 1):
-        result.append(f"{i}. '{word}': {freq} times")
+    for i, (word, count) in enumerate(sorted_words, 1):
+        result.append(f"{i}. '{word}': {count} times")
     
-    # Add transformed content preview
-    result.append("\n" + "-" * 50)
-    result.append("📄 CONTENT PREVIEW (first 500 chars)")
-    result.append("-" * 50)
-    result.append(content[:500])
-    if len(content) > 500:
-        result.append("\n... [truncated]")
+    # Empty line analysis
+    empty_lines = sum(1 for line in lines if not line.strip())
+    if empty_lines > 0:
+        result.append(f"\n📄 Empty lines: {empty_lines}")
     
     result.append("\n" + "=" * 50)
-    result.append("✅ Processing complete!")
+    result.append("✅ Analysis Complete!")
     result.append("=" * 50)
     
     return '\n'.join(result)
 
 
-# Expose the function to JavaScript
+# Expose function to JavaScript
 window.processFile = process_file
