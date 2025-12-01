@@ -139,6 +139,9 @@ function createFormField(fieldInfo) {
             const field = formFields.find(f => f.name === e.target.dataset.fieldName);
             if (field) field.value = e.target.value;
         });
+        fieldDiv.appendChild(input);
+        formFieldsContainer.appendChild(fieldDiv);
+        return;
         
     } else if (fieldInfo.type === 'PDFCheckBox') {
         const checkboxWrapper = document.createElement('div');
@@ -186,6 +189,9 @@ function createFormField(fieldInfo) {
             const field = formFields.find(f => f.name === e.target.dataset.fieldName);
             if (field) field.value = [e.target.value];
         });
+        fieldDiv.appendChild(input);
+        formFieldsContainer.appendChild(fieldDiv);
+        return;
         
     } else if (fieldInfo.type === 'PDFRadioGroup') {
         const radioWrapper = document.createElement('div');
@@ -221,17 +227,18 @@ function createFormField(fieldInfo) {
             
             radioDiv.appendChild(radioInput);
             radioDiv.appendChild(radioLabel);
-            radioWrapper.appendChild(radioDiv);
-        });
-        
         fieldDiv.appendChild(radioWrapper);
         formFieldsContainer.appendChild(fieldDiv);
         return;
     }
     
+    // This should never be reached now, but keep as fallback
     if (input) {
         fieldDiv.appendChild(input);
     }
+    
+    formFieldsContainer.appendChild(fieldDiv);
+}   }
     
     formFieldsContainer.appendChild(fieldDiv);
 }
