@@ -164,27 +164,11 @@
         .tool-category {
             display: inline-block;
             background: #667eea;
-</head>
-<body>
-    <div class="theme-toggle" id="theme-toggle">
-        <svg class="theme-toggle-icon" id="theme-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="5"/>
-            <line x1="12" y1="1" x2="12" y2="3"/>
-            <line x1="12" y1="21" x2="12" y2="23"/>
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-            <line x1="1" y1="12" x2="3" y2="12"/>
-            <line x1="21" y1="12" x2="23" y2="12"/>
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-        </svg>
-        <span class="theme-toggle-text" id="theme-text">Light</span>
-    </div>
-    
-    <div class="header">
-        <h1><img src="assets/icons/wrench.svg" alt="" style="width: 48px; height: 48px; vertical-align: middle; margin-right: 10px; stroke: white;"> Bench</h1>
-        <p>A collection of browser-based tools</p>
-    </div>
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85em;
+        }
         
         .tool-tech {
             display: flex;
@@ -257,6 +241,21 @@
     </style>
 </head>
 <body>
+    <div class="theme-toggle" id="theme-toggle">
+        <svg class="theme-toggle-icon" id="theme-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+        <span class="theme-toggle-text" id="theme-text">Light</span>
+    </div>
+    
     <div class="header">
         <h1><img src="assets/icons/wrench.svg" alt="" style="width: 48px; height: 48px; vertical-align: middle; margin-right: 10px; stroke: white;"> Bench</h1>
         <p>A collection of browser-based tools</p>
@@ -345,6 +344,20 @@
                         <span class="tool-category">${tool.category || 'Uncategorized'}</span>
                         ${tool.technologies ? `
                             <div class="tool-tech">
+                                ${tool.technologies.map(tech => `<span class="tech-tag">${tech}</span>`).join('')}
+                            </div>
+                        ` : ''}
+                    `;
+                    toolsGrid.appendChild(card);
+                });
+                
+            } catch (error) {
+                console.error('Error loading tools:', error);
+                loading.style.display = 'none';
+                noTools.style.display = 'block';
+            }
+        }
+        
         // Load tools when page loads
         document.addEventListener('DOMContentLoaded', loadTools);
         
@@ -377,21 +390,6 @@
                 themeText.textContent = 'Light';
             }
         }
-    </script>
-</body>
-</html>             
-                    toolsGrid.appendChild(card);
-                });
-                
-            } catch (error) {
-                console.error('Error loading tools:', error);
-                loading.style.display = 'none';
-                noTools.style.display = 'block';
-            }
-        }
-        
-        // Load tools when page loads
-        document.addEventListener('DOMContentLoaded', loadTools);
     </script>
 </body>
 </html>
