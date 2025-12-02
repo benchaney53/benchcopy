@@ -469,7 +469,7 @@
                 tools.forEach(tool => {
                     const card = document.createElement('a');
                     card.className = 'tool-card';
-                    card.href = `tools/${tool.id}/${tool.id}.html`;
+                    card.href = `tools/${tool.id}/`;
                     
                     card.innerHTML = `
                         <div class="tool-icon">${tool.icon || '<i class="fa-solid fa-wrench" style="font-size: 48px;"></i>'}</div>

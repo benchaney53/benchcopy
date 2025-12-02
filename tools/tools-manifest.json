@@ -12,11 +12,11 @@
     ]
   },
   {
+    "id": "job-book-checker",
     "name": "Job Book Files Checker",
     "description": "Check if a job book folder contains all required files and folders",
     "category": "Utilities",
-    "icon": "📁",
-    "path": "tools/job-book-checker/job-book-checker.html"
+    "icon": "📁"
   },
   {
     "id": "pdf-form-checker",

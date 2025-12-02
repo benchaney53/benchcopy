@@ -59,7 +59,7 @@
         // Generate tools submenu dynamically
         let toolsSubmenuHTML = '';
         tools.forEach(tool => {
-            const toolPath = basePath + 'tools/' + tool.id + '/' + tool.id + '.html';
+            const toolPath = basePath + 'tools/' + tool.id + '/';
             toolsSubmenuHTML += `
                 <a href="${toolPath}" class="sidebar-link sidebar-sublink">
                     <i class="fas fa-file-pdf"></i>
