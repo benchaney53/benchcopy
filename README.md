@@ -2,6 +2,28 @@
 
 Local copy prepared for two-way sync with [bechy53/bench](https://github.com/bechy53/bench).
 
+## Job Book Tool
+
+The repository now includes a simple Job Book Tool (`job_book_tool.py`) that lets you configure
+which files to scan for and the folder where they should live. Configuration is saved in
+`job_book_config.json` at the repository root.
+
+### Configure tracked files
+
+Add or toggle patterns and set the search folder:
+
+```bash
+python job_book_tool.py configure --root ./jobs --add "*.md" "*.txt" --disable "*.txt" --list-config
+```
+
+### Scan for configured files
+
+Once configured, scan using the saved settings:
+
+```bash
+python job_book_tool.py scan
+```
+
 ## Remote configuration
 
 This repository is configured with an `origin` remote pointing at `https://github.com/bechy53/bench` for both fetching and pushing.
