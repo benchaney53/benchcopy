@@ -36,9 +36,13 @@ function findCaseInsensitiveOption(options, value) {
 }
 
 function toWinAnsiSafe(value) {
-    const str = (value ?? '').toString();
-    // Replace characters outside WinAnsi with '?'
-    return str.replace(/[^\x00-\xFF]/g, '?');
+    let str = (value ?? '').toString();
+    // Replace unknown replacement chars and any non-ASCII with spaces
+    str = str.replace(/\uFFFD/g, ' ');
+    str = str.replace(/[^\x00-\x7F]/g, ' ');
+    // Collapse multiple whitespace to a single space and trim
+    str = str.replace(/\s+/g, ' ').trim();
+    return str;
 }
 
 async function ensureValidPdfBytes() {
