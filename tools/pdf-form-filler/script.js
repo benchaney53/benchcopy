@@ -100,6 +100,16 @@ async function saveLastPdf(bytes, name) {
     }
 }
 
+async function deleteLastPdf() {
+    try {
+        const db = await openPdfDb();
+        const tx = db.transaction(PDF_STORE, 'readwrite');
+        tx.objectStore(PDF_STORE).delete(PDF_KEY);
+    } catch (err) {
+        console.warn('Could not delete cached PDF:', err);
+    }
+}
+
 async function loadLastPdf() {
     try {
         const db = await openPdfDb();
@@ -120,9 +130,16 @@ async function restoreLastPdfIfAny() {
         setRestoreStatus('Restoring last PDF...', false);
         const cached = await loadLastPdf();
         if (cached && cached.bytes) {
+            const cachedBytes = new Uint8Array(cached.bytes);
+            if (!cachedBytes.byteLength || !isProbablyPdf(cachedBytes)) {
+                console.warn('Cached PDF invalid or empty; clearing cache.');
+                await deleteLastPdf();
+                setRestoreStatus('Cached PDF was invalid; please upload again', true);
+                return;
+            }
             restoringFromStorage = true;
-            logFill('Restoring last PDF from storage:', cached.name, cached.size, 'bytes');
-            await handlePdfBytes(cached.name, cached.bytes, true, cached.size);
+            logFill('Restoring last PDF from storage:', cached.name, cachedBytes.byteLength, 'bytes');
+            await handlePdfBytes(cached.name, cachedBytes, true, cachedBytes.byteLength);
             setRestoreStatus(`Restored cached PDF: ${cached.name}`, false);
         }
     } catch (err) {
@@ -245,8 +262,15 @@ function formatFileSize(bytes) {
 })();
 
 async function handlePdfBytes(name, bytes, skipSave = false, sizeOverride = null) {
+    // Make a stable copy up front to avoid detached buffer issues
+    const stableBytes = cloneBytesSafe(bytes);
+    if (!stableBytes) {
+        setRestoreStatus('Failed to copy PDF bytes for caching', true);
+        return;
+    }
+
     fileName.textContent = name;
-    fileSize.textContent = formatFileSize(sizeOverride || bytes.byteLength);
+    fileSize.textContent = formatFileSize(sizeOverride || stableBytes.byteLength);
     fileInfo.classList.add('visible');
     setRestoreStatus(skipSave ? `Loaded cached PDF: ${name}` : `Loaded PDF: ${name}`, false);
 
@@ -255,18 +279,18 @@ async function handlePdfBytes(name, bytes, skipSave = false, sizeOverride = null
     setActionButtonsEnabled(false);
 
     try {
-        uploadedPdfBytes = new Uint8Array(bytes);
+        uploadedPdfBytes = stableBytes;
 
-        if (!isProbablyPdf(uploadedPdfBytes)) {
+        if (!isProbablyPdf(stableBytes)) {
             throw new Error('Selected file is not a valid PDF (missing %PDF header).');
         }
         
         // Load PDF with pdf-lib
-        pdfDoc = await PDFLib.PDFDocument.load(uploadedPdfBytes);
-        basePdfBytes = uploadedPdfBytes.slice(); // keep pristine copy for downstream fills
+        pdfDoc = await PDFLib.PDFDocument.load(stableBytes);
+        basePdfBytes = cloneBytesSafe(stableBytes) || stableBytes; // keep pristine copy for downstream fills
         
         // Load PDF with PDF.js for rendering
-        pdfJsDoc = await pdfjsLib.getDocument({ data: uploadedPdfBytes }).promise;
+        pdfJsDoc = await pdfjsLib.getDocument({ data: stableBytes }).promise;
         
         // Extract form fields
         await extractFormFields();
@@ -276,7 +300,7 @@ async function handlePdfBytes(name, bytes, skipSave = false, sizeOverride = null
         setActionButtonsEnabled(true);
 
         if (!skipSave) {
-            await saveLastPdf(uploadedPdfBytes, name);
+            await saveLastPdf(stableBytes, name);
         }
     } catch (error) {
         alert('Error loading PDF: ' + error.message);
