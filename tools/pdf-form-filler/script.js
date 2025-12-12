@@ -8,10 +8,31 @@ let pdfJsDoc = null;
 let formFields = [];
 let originalFormFields = [];
 
+// Debug helper
+const DEBUG_FILL = true;
+function logFill(...args) {
+    if (DEBUG_FILL) console.log('[fill]', ...args);
+}
+
 function isProbablyPdf(bytes) {
     if (!bytes || bytes.length < 5) return false;
     const header = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
     return header === '%PDF-';
+}
+
+function normalizeFieldName(name) {
+    return (name || '').toString().trim().toLowerCase();
+}
+
+function findCaseInsensitiveOption(options, value) {
+    const target = (value ?? '').toString().trim().toLowerCase();
+    if (!target) return null;
+    for (const opt of options || []) {
+        if ((opt || '').toString().trim().toLowerCase() === target) {
+            return opt;
+        }
+    }
+    return null;
 }
 
 async function ensureValidPdfBytes() {
@@ -785,16 +806,23 @@ function parseCsvContent(content) {
 
 function csvRowsToDataMap(parsedCsv) {
     const headers = parsedCsv.headers.map(h => h.trim());
+    const normalizedHeaders = headers.map(normalizeFieldName);
     const dataMaps = [];
 
     parsedCsv.rows.forEach((values, rowIdx) => {
         const map = {};
-        headers.forEach((header, idx) => {
-            if (!header) return;
-            map[header] = values[idx] ?? '';
+        const normalizedMap = {};
+
+        normalizedHeaders.forEach((nHeader, idx) => {
+            if (!headers[idx]) return;
+            const val = values[idx] ?? '';
+            map[headers[idx]] = val;
+            normalizedMap[nHeader] = val;
         });
+
         const hasData = Object.values(map).some(v => (v ?? '').toString().trim().length > 0);
         if (hasData) {
+            map.__normalized = normalizedMap;
             dataMaps.push(map);
         } else {
             console.warn(`Row ${rowIdx + 2} is empty and was skipped.`);
@@ -807,6 +835,7 @@ function csvRowsToDataMap(parsedCsv) {
 async function generateFilledPdf(dataMap, baseBytes) {
     const bytes = baseBytes || basePdfBytes || requirePdfLoaded();
     const tempPdf = await PDFLib.PDFDocument.load(bytes);
+    const helvetica = await tempPdf.embedFont(PDFLib.StandardFonts.Helvetica);
     const form = tempPdf.getForm();
     const pdfFields = form.getFields();
     const pdfFieldMap = {};
@@ -814,17 +843,27 @@ async function generateFilledPdf(dataMap, baseBytes) {
         pdfFieldMap[field.getName()] = field;
     });
 
+    logFill('Generating PDF with data keys:', Object.keys(dataMap));
+
     for (const fieldInfo of formFields) {
         if (fieldInfo.deleted) continue;
         const pdfField = pdfFieldMap[fieldInfo.name];
         if (!pdfField) continue;
 
-        const value = dataMap[fieldInfo.name];
-        if (value === undefined) continue;
+        const normalized = dataMap.__normalized || {};
+        const rawValue = dataMap[fieldInfo.name];
+        const normValue = normalized[normalizeFieldName(fieldInfo.name)];
+        const value = (rawValue !== undefined ? rawValue : normValue);
+        if (value === undefined) {
+            logFill('No value for field', fieldInfo.name, '- skipping');
+            continue;
+        }
 
         try {
             if (fieldInfo.type === 'PDFTextField') {
-                pdfField.setText(value ?? '');
+                const textVal = (value ?? '').toString();
+                pdfField.setText(textVal);
+                logFill('Set text', fieldInfo.name, '=>', textVal);
             } else if (fieldInfo.type === 'PDFCheckBox') {
                 const isChecked = typeof value === 'string' ? value.trim().toLowerCase() === 'true' : !!value;
                 if (isChecked) {
@@ -832,21 +871,33 @@ async function generateFilledPdf(dataMap, baseBytes) {
                 } else {
                     pdfField.uncheck();
                 }
+                logFill('Set checkbox', fieldInfo.name, '=>', isChecked);
             } else if (fieldInfo.type === 'PDFDropdown') {
                 if (value !== undefined && value !== null && value !== '') {
-                    pdfField.select(Array.isArray(value) ? value[0] : value);
+                    const candidate = Array.isArray(value) ? value[0] : value;
+                    const match = findCaseInsensitiveOption(pdfField.getOptions ? pdfField.getOptions() : fieldInfo.options, candidate) || candidate;
+                    pdfField.select(match);
+                    logFill('Set dropdown', fieldInfo.name, '=>', match);
                 }
             } else if (fieldInfo.type === 'PDFRadioGroup') {
                 if (value !== undefined && value !== null && value !== '') {
-                    pdfField.select(Array.isArray(value) ? value[0] : value);
+                    const candidate = Array.isArray(value) ? value[0] : value;
+                    const match = findCaseInsensitiveOption(pdfField.getOptions ? pdfField.getOptions() : fieldInfo.options, candidate) || candidate;
+                    pdfField.select(match);
+                    logFill('Set radio', fieldInfo.name, '=>', match);
                 }
             } else {
-                pdfField.setText(value ?? '');
+                const textVal = (value ?? '').toString();
+                pdfField.setText(textVal);
+                logFill('Set fallback text', fieldInfo.name, '=>', textVal);
             }
         } catch (error) {
             console.error(`Error setting value for field ${fieldInfo.name}:`, error);
         }
     }
+
+    // Refresh appearances so values render in output
+    form.updateFieldAppearances(helvetica);
 
     return await tempPdf.save();
 }
@@ -861,6 +912,8 @@ async function processCsvImports(files) {
         alert(err.message);
         return;
     }
+
+    logFill('Starting CSV import for', files.length, 'file(s)');
 
     loading.classList.add('visible');
 
