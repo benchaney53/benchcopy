@@ -13,6 +13,20 @@ function isProbablyPdf(bytes) {
     return header === '%PDF-';
 }
 
+async function ensureValidPdfBytes() {
+    const bytes = requirePdfLoaded();
+    if (!isProbablyPdf(bytes)) {
+        throw new Error('The loaded file is not a valid PDF (missing %PDF header). Please re-upload a PDF.');
+    }
+    try {
+        // Quick sanity check that pdf-lib can parse the bytes
+        await PDFLib.PDFDocument.load(bytes);
+    } catch (err) {
+        throw new Error(`The loaded PDF could not be parsed. Please re-upload the PDF. (${err.message})`);
+    }
+    return bytes;
+}
+
 function requirePdfLoaded() {
     if (!uploadedPdfBytes || !(uploadedPdfBytes instanceof Uint8Array) || uploadedPdfBytes.length === 0) {
         throw new Error('No PDF is loaded. Please upload a PDF file before importing CSV.');
@@ -787,9 +801,9 @@ function csvRowsToDataMap(parsedCsv) {
     return dataMaps;
 }
 
-async function generateFilledPdf(dataMap) {
-    const baseBytes = requirePdfLoaded();
-    const tempPdf = await PDFLib.PDFDocument.load(baseBytes);
+async function generateFilledPdf(dataMap, baseBytes) {
+    const bytes = baseBytes || requirePdfLoaded();
+    const tempPdf = await PDFLib.PDFDocument.load(bytes);
     const form = tempPdf.getForm();
     const pdfFields = form.getFields();
     const pdfFieldMap = {};
@@ -837,8 +851,9 @@ async function generateFilledPdf(dataMap) {
 async function processCsvImports(files) {
     if (!files.length) return;
 
+    let validatedBytes;
     try {
-        requirePdfLoaded();
+        validatedBytes = await ensureValidPdfBytes();
     } catch (err) {
         alert(err.message);
         return;
@@ -864,7 +879,7 @@ async function processCsvImports(files) {
             let rowNumber = 1;
 
             for (const dataMap of dataMaps) {
-                const pdfBytes = await generateFilledPdf(dataMap);
+                const pdfBytes = await generateFilledPdf(dataMap, validatedBytes);
                 zip.file(`filled_${fileBaseName}_row${rowNumber}.pdf`, pdfBytes);
                 pdfCount += 1;
                 rowNumber += 1;
