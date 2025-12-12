@@ -7,6 +7,7 @@ let pdfDoc = null;
 let pdfJsDoc = null;
 let formFields = [];
 let originalFormFields = [];
+let restoringFromStorage = false;
 
 // Debug helper
 const DEBUG_FILL = true;
@@ -37,12 +38,87 @@ function findCaseInsensitiveOption(options, value) {
 
 function toWinAnsiSafe(value) {
     let str = (value ?? '').toString();
+    // Normalize non-breaking spaces and narrow NBSP to regular space
+    str = str.replace(/[\u00A0\u202F]/g, ' ');
     // Replace unknown replacement chars and any non-ASCII with spaces
     str = str.replace(/\uFFFD/g, ' ');
     str = str.replace(/[^\x00-\x7F]/g, ' ');
     // Collapse multiple whitespace to a single space and trim
     str = str.replace(/\s+/g, ' ').trim();
     return str;
+}
+
+// IndexedDB helpers to persist last PDF
+const PDF_DB_NAME = 'pdfFormFillerStore';
+const PDF_STORE = 'pdfs';
+const PDF_KEY = 'last';
+
+function openPdfDb() {
+    return new Promise((resolve, reject) => {
+        if (!('indexedDB' in window)) return reject(new Error('indexedDB not supported'));
+        const request = indexedDB.open(PDF_DB_NAME, 1);
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(PDF_STORE)) {
+                db.createObjectStore(PDF_STORE, { keyPath: 'id' });
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error('Could not open PDF DB'));
+    });
+}
+
+async function saveLastPdf(bytes, name) {
+    try {
+        const db = await openPdfDb();
+        const tx = db.transaction(PDF_STORE, 'readwrite');
+        tx.objectStore(PDF_STORE).put({
+            id: PDF_KEY,
+            name,
+            size: bytes.byteLength,
+            ts: Date.now(),
+            bytes
+        });
+    } catch (err) {
+        console.warn('Could not persist PDF locally:', err);
+    }
+}
+
+async function loadLastPdf() {
+    try {
+        const db = await openPdfDb();
+        const tx = db.transaction(PDF_STORE, 'readonly');
+        return await new Promise((resolve, reject) => {
+            const req = tx.objectStore(PDF_STORE).get(PDF_KEY);
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => reject(req.error || new Error('Failed to read PDF'));
+        });
+    } catch (err) {
+        console.warn('Could not read cached PDF:', err);
+        return null;
+    }
+}
+
+async function restoreLastPdfIfAny() {
+    try {
+        setRestoreStatus('Restoring last PDF...', false);
+        const cached = await loadLastPdf();
+        if (cached && cached.bytes) {
+            restoringFromStorage = true;
+            logFill('Restoring last PDF from storage:', cached.name, cached.size, 'bytes');
+            await handlePdfBytes(cached.name, cached.bytes, true, cached.size);
+            setRestoreStatus(`Restored cached PDF: ${cached.name}`, false);
+        }
+    } catch (err) {
+        console.warn('Restore last PDF failed:', err);
+        setRestoreStatus('Could not restore cached PDF', true);
+    } finally {
+        restoringFromStorage = false;
+        // Clear status if nothing restored
+        if (!uploadedPdfBytes && restoreStatus && restoreStatus.textContent === 'Restoring last PDF...') {
+            setRestoreStatus('', false);
+        }
+    }
 }
 
 async function ensureValidPdfBytes() {
@@ -80,6 +156,7 @@ const loading = document.getElementById('loading');
 const formSection = document.getElementById('form-section');
 const formFieldsContainer = document.getElementById('form-fields');
 const fieldCount = document.getElementById('field-count');
+const restoreStatus = document.getElementById('restore-status');
 const exportCsvBtn = document.getElementById('export-csv-btn');
 const importCsvBtn = document.getElementById('import-csv-btn');
 const csvImportInput = document.getElementById('csv-import-input');
@@ -93,6 +170,12 @@ function setActionButtonsEnabled(enabled) {
             btn.disabled = !enabled;
         }
     });
+}
+
+function setRestoreStatus(message, isError = false) {
+    if (!restoreStatus) return;
+    restoreStatus.textContent = message || '';
+    restoreStatus.classList.toggle('error', !!isError);
 }
 
 // Disable action buttons until a PDF is loaded
@@ -140,18 +223,23 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
-async function handleFile(file) {
-    fileName.textContent = file.name;
-    fileSize.textContent = formatFileSize(file.size);
+// Attempt to restore last PDF from local storage on load
+(async () => {
+    await restoreLastPdfIfAny();
+})();
+
+async function handlePdfBytes(name, bytes, skipSave = false, sizeOverride = null) {
+    fileName.textContent = name;
+    fileSize.textContent = formatFileSize(sizeOverride || bytes.byteLength);
     fileInfo.classList.add('visible');
+    setRestoreStatus(skipSave ? `Loaded cached PDF: ${name}` : `Loaded PDF: ${name}`, false);
 
     loading.classList.add('visible');
     formSection.classList.remove('visible');
     setActionButtonsEnabled(false);
 
     try {
-        const arrayBuffer = await file.arrayBuffer();
-        uploadedPdfBytes = new Uint8Array(arrayBuffer);
+        uploadedPdfBytes = new Uint8Array(bytes);
 
         if (!isProbablyPdf(uploadedPdfBytes)) {
             throw new Error('Selected file is not a valid PDF (missing %PDF header).');
@@ -171,12 +259,21 @@ async function handleFile(file) {
         formSection.classList.add('visible');
         setActionButtonsEnabled(true);
 
+        if (!skipSave) {
+            saveLastPdf(uploadedPdfBytes, name);
+        }
     } catch (error) {
         alert('Error loading PDF: ' + error.message);
         console.error(error);
         loading.classList.remove('visible');
         setActionButtonsEnabled(false);
+        setRestoreStatus('Failed to load PDF', true);
     }
+}
+
+async function handleFile(file) {
+    const arrayBuffer = await file.arrayBuffer();
+    await handlePdfBytes(file.name, arrayBuffer);
 }
 
 async function extractFormFields() {
