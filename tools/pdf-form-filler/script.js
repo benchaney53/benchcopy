@@ -676,17 +676,18 @@ function exportFieldsToCsv() {
     }
 
     const activeFields = formFields.filter(field => !field.deleted);
-    const rows = activeFields.map(field => {
+    const headerRow = activeFields.map(field => csvEscape(field.name)).join(',');
+    const valueRow = activeFields.map(field => {
         let value = field.value;
         if (Array.isArray(value)) {
             value = value.join('; ');
         } else if (typeof value === 'boolean') {
             value = value ? 'true' : 'false';
         }
-        return `${csvEscape(field.name)},${csvEscape(value ?? '')}`;
-    });
+        return csvEscape(value ?? '');
+    }).join(',');
 
-    const csvContent = ['Title,Value', ...rows].join('\n');
+    const csvContent = [headerRow, valueRow].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -745,21 +746,24 @@ function parseCsvContent(content) {
 }
 
 function csvRowsToDataMap(parsedCsv) {
-    const titleIndex = parsedCsv.headers.findIndex(h => h.toLowerCase() === 'title' || h.toLowerCase() === 'field');
-    const valueIndex = parsedCsv.headers.findIndex(h => h.toLowerCase() === 'value');
+    const headers = parsedCsv.headers.map(h => h.trim());
+    const dataMaps = [];
 
-    const dataMap = {};
-
-    parsedCsv.rows.forEach(values => {
-        const title = values[titleIndex !== -1 ? titleIndex : 0];
-        const value = values[valueIndex !== -1 ? valueIndex : 1];
-
-        if (title && title.trim().length > 0) {
-            dataMap[title.trim()] = value ?? '';
+    parsedCsv.rows.forEach((values, rowIdx) => {
+        const map = {};
+        headers.forEach((header, idx) => {
+            if (!header) return;
+            map[header] = values[idx] ?? '';
+        });
+        const hasData = Object.values(map).some(v => (v ?? '').toString().trim().length > 0);
+        if (hasData) {
+            dataMaps.push(map);
+        } else {
+            console.warn(`Row ${rowIdx + 2} is empty and was skipped.`);
         }
     });
 
-    return dataMap;
+    return dataMaps;
 }
 
 async function generateFilledPdf(dataMap) {
@@ -820,20 +824,32 @@ async function processCsvImports(files) {
 
     try {
         const zip = new JSZip();
+        let pdfCount = 0;
 
         for (const file of files) {
             const content = await file.text();
             const parsed = parseCsvContent(content);
-            const dataMap = csvRowsToDataMap(parsed);
+            const dataMaps = csvRowsToDataMap(parsed);
 
-            if (Object.keys(dataMap).length === 0) {
+            if (!dataMaps.length) {
                 console.warn(`No data found in CSV ${file.name}`);
                 continue;
             }
 
-            const pdfBytes = await generateFilledPdf(dataMap);
             const fileBaseName = file.name.replace(/\.csv$/i, '') || 'filled-form';
-            zip.file(`filled_${fileBaseName}.pdf`, pdfBytes);
+            let rowNumber = 1;
+
+            for (const dataMap of dataMaps) {
+                const pdfBytes = await generateFilledPdf(dataMap);
+                zip.file(`filled_${fileBaseName}_row${rowNumber}.pdf`, pdfBytes);
+                pdfCount += 1;
+                rowNumber += 1;
+            }
+        }
+
+        if (pdfCount === 0) {
+            alert('No filled PDFs were generated from the provided CSV data.');
+            return;
         }
 
         const zipBlob = await zip.generateAsync({ type: 'blob' });
