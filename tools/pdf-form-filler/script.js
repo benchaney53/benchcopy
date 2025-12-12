@@ -926,12 +926,7 @@ async function generateFilledPdf(dataMap, baseBytes) {
         }
     }
 
-    // Refresh appearances so values render in output
-    try {
-        form.updateFieldAppearances(helvetica);
-    } catch (err) {
-        console.warn('Failed to update field appearances; values still set:', err);
-    }
+    // Skip appearance regeneration to avoid WinAnsi encoding errors on some PDFs
 
     return await tempPdf.save();
 }
