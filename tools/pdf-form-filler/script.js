@@ -48,6 +48,20 @@ function toWinAnsiSafe(value) {
     return str;
 }
 
+function cloneBytesSafe(bytes) {
+    try {
+        const source = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        const copy = new Uint8Array(source.length);
+        for (let i = 0; i < source.length; i++) {
+            copy[i] = source[i];
+        }
+        return copy;
+    } catch (err) {
+        console.warn('Failed to clone bytes for caching:', err);
+        return null;
+    }
+}
+
 // IndexedDB helpers to persist last PDF
 const PDF_DB_NAME = 'pdfFormFillerStore';
 const PDF_STORE = 'pdfs';
@@ -70,19 +84,8 @@ function openPdfDb() {
 
 async function saveLastPdf(bytes, name) {
     try {
-        // Clone to avoid detached buffer issues. Use slice if available, else copy.
-        let clone;
-        if (bytes instanceof Uint8Array) {
-            try {
-                clone = bytes.slice();
-            } catch {
-                clone = new Uint8Array(bytes.buffer.slice(0));
-            }
-        } else if (bytes instanceof ArrayBuffer) {
-            clone = new Uint8Array(bytes.slice(0));
-        } else {
-            clone = new Uint8Array(bytes);
-        }
+        const clone = cloneBytesSafe(bytes);
+        if (!clone) return;
         const db = await openPdfDb();
         const tx = db.transaction(PDF_STORE, 'readwrite');
         tx.objectStore(PDF_STORE).put({
