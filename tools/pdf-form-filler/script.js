@@ -20,21 +20,6 @@ const fieldCount = document.getElementById('field-count');
 const exportCsvBtn = document.getElementById('export-csv-btn');
 const importCsvBtn = document.getElementById('import-csv-btn');
 const csvImportInput = document.getElementById('csv-import-input');
-const clearBtn = document.getElementById('clear-btn');
-const resetBtn = document.getElementById('reset-btn');
-const downloadBtn = document.getElementById('download-btn');
-
-const actionButtons = [exportCsvBtn, importCsvBtn, clearBtn, resetBtn, downloadBtn];
-
-function setActionButtonsEnabled(enabled) {
-    actionButtons.forEach((btn) => {
-        if (btn) {
-            btn.disabled = !enabled;
-        }
-    });
-}
-
-setActionButtonsEnabled(false);
 
 uploadArea.addEventListener('click', () => fileInput.click());
 
