@@ -233,8 +233,252 @@
             margin-bottom: 15px;
             color: var(--text-color);
         }
+        .tower-meta {
+            color: #888;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+        body.light-mode .tower-meta {
+            color: #555;
+        }
         .towers-summary {
             margin-top: 20px;
+        }
+        
+        /* Configuration Panel Styles */
+        .config-panel {
+            background: var(--card-bg);
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            overflow: hidden;
+            transition: background 0.3s ease;
+        }
+        body.light-mode .config-panel {
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .config-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px 20px;
+            cursor: pointer;
+            background: rgba(102, 126, 234, 0.15);
+            border-bottom: 1px solid var(--border-color);
+            transition: background 0.2s ease;
+        }
+        .config-header:hover {
+            background: rgba(102, 126, 234, 0.25);
+        }
+        .config-header h2 {
+            margin: 0;
+            font-size: 1.1em;
+            color: var(--text-color);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .config-header .toggle-icon {
+            transition: transform 0.3s ease;
+            width: 20px;
+            height: 20px;
+            stroke: var(--text-color);
+        }
+        .config-header .toggle-icon.open {
+            transform: rotate(180deg);
+        }
+        .config-body {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        .config-body.open {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .config-content {
+            padding: 20px;
+        }
+        .category-section {
+            margin-bottom: 10px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        body.light-mode .category-section {
+            background: rgba(0,0,0,0.05);
+        }
+        .category-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 15px;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .category-header:hover {
+            background: rgba(255,255,255,0.05);
+        }
+        body.light-mode .category-header:hover {
+            background: rgba(0,0,0,0.03);
+        }
+        .category-header-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+        }
+        .category-toggle-icon {
+            width: 16px;
+            height: 16px;
+            stroke: var(--text-color);
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+        }
+        .category-toggle-icon.open {
+            transform: rotate(180deg);
+        }
+        .category-header h3 {
+            margin: 0;
+            color: var(--text-color);
+            font-size: 1em;
+        }
+        .category-header input {
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--text-color);
+            font-size: 1em;
+            font-weight: 600;
+            padding: 4px 0;
+            outline: none;
+            transition: border-color 0.2s ease;
+            flex: 1;
+            min-width: 0;
+        }
+        .category-header input:focus {
+            border-bottom-color: #667eea;
+        }
+        .category-count {
+            font-size: 0.8em;
+            color: #888;
+            background: rgba(102, 126, 234, 0.2);
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: 10px;
+        }
+        .category-body {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.2s ease;
+        }
+        .category-body.open {
+            max-height: 1000px;
+        }
+        .category-content {
+            padding: 0 15px 15px 15px;
+        }
+        .pattern-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .pattern-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255,255,255,0.05);
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: background 0.2s ease;
+        }
+        body.light-mode .pattern-item {
+            background: rgba(0,0,0,0.03);
+        }
+        .pattern-item:hover {
+            background: rgba(255,255,255,0.1);
+        }
+        body.light-mode .pattern-item:hover {
+            background: rgba(0,0,0,0.07);
+        }
+        .pattern-item input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid transparent;
+            color: var(--text-color);
+            font-size: 0.9em;
+            padding: 4px 0;
+            outline: none;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        .pattern-item input:focus {
+            border-bottom-color: #667eea;
+        }
+        .btn-icon {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+        .btn-icon svg {
+            width: 18px;
+            height: 18px;
+            stroke: #888;
+            transition: stroke 0.2s ease;
+        }
+        .btn-icon:hover svg {
+            stroke: #dc3545;
+        }
+        .btn-icon.add-btn:hover svg {
+            stroke: #28a745;
+        }
+        .btn-small {
+            background: rgba(102, 126, 234, 0.3);
+            color: var(--text-color);
+            padding: 6px 14px;
+            border: none;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s ease;
+        }
+        .btn-small:hover {
+            background: rgba(102, 126, 234, 0.5);
+        }
+        .btn-small.danger {
+            background: rgba(220, 53, 69, 0.3);
+        }
+        .btn-small.danger:hover {
+            background: rgba(220, 53, 69, 0.5);
+        }
+        .config-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding-top: 15px;
+            border-top: 1px solid var(--border-color);
+            margin-top: 15px;
+        }
+        .pattern-hint {
+            font-size: 0.8em;
+            color: #888;
+            margin-bottom: 15px;
+            line-height: 1.5;
+        }
+        .pattern-hint code {
+            background: rgba(0,0,0,0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        body.light-mode .pattern-hint code {
+            background: rgba(0,0,0,0.08);
         }
     </style>
 </head>
@@ -260,6 +504,34 @@
     
     <h1>Job Book Files Checker</h1>
     <p class="description">Upload a job book folder (or parent folder containing multiple job books) to verify all required files are present.</p>
+    
+    <!-- Configuration Panel -->
+    <div class="config-panel">
+        <div class="config-header" id="configToggle">
+            <h2>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+                Configure Required Files
+            </h2>
+            <svg class="toggle-icon" id="toggleIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="config-body" id="configBody">
+            <div class="config-content">
+                <p class="pattern-hint">
+                    Folders are required. Each folder must match its pattern (wildcards allowed), and the listed files must be inside that folder. Use <code>*</code> as wildcard. Add <code>x3</code> at the end to require multiples (e.g., <code>*Blade* *Transport* x3</code>).
+                </p>
+                <div id="categoriesContainer"></div>
+                <div class="config-actions">
+                    <button class="btn-small" id="addCategoryBtn">+ Add Category</button>
+                    <button class="btn-small danger" id="resetConfigBtn">Reset to Defaults</button>
+                </div>
+            </div>
+        </div>
+    </div>
     
     <div class="container">
         <div class="upload-area" id="uploadArea">
