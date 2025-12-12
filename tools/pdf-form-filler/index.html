@@ -392,6 +392,10 @@
         body.light-mode .btn-secondary:hover {
             background-color: #545b62;
         }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
         .button-group {
             position: fixed;
             bottom: 0;
@@ -529,26 +533,35 @@
             <div class="stats">
                 <p><strong id="field-count">0</strong> form fields found</p>
             </div>
-            
+
             <h2>Fill Out Form Fields</h2>
             <div id="form-fields" class="form-fields"></div>
-            
-            <div class="button-group">
-                <button class="btn btn-secondary" id="clear-btn">
-                    <img src="../../assets/icons/refresh.svg" alt="" style="width: 16px; height: 16px; vertical-align: middle; stroke: white; margin-right: 5px;"> Clear Form
-                </button>
-                <button class="btn btn-secondary" id="reset-btn">
-                    <img src="../../assets/icons/refresh.svg" alt="" style="width: 16px; height: 16px; vertical-align: middle; stroke: white; margin-right: 5px;"> Reset Form
-                </button>
-                <button class="btn btn-success" id="download-btn">
-                    <img src="../../assets/icons/download.svg" alt="" style="width: 16px; height: 16px; vertical-align: middle; stroke: white; margin-right: 5px;"> Download Filled PDF
-                </button>
-            </div>
         </div>
     </div>
 
+    <div class="button-group">
+        <button class="btn btn-secondary" id="export-csv-btn">
+            <img src="../../assets/icons/download.svg" alt="" style="width: 16px; height: 16px; vertical-align: middle; stroke: white; margin-right: 5px;"> Export CSV
+        </button>
+        <button class="btn btn-secondary" id="import-csv-btn">
+            <img src="../../assets/icons/upload.svg" alt="" style="width: 16px; height: 16px; vertical-align: middle; stroke: white; margin-right: 5px;"> Import CSVs &amp; Download Zip
+        </button>
+        <button class="btn btn-secondary" id="clear-btn">
+            <img src="../../assets/icons/refresh.svg" alt="" style="width: 16px; height: 16px; vertical-align: middle; stroke: white; margin-right: 5px;"> Clear Form
+        </button>
+        <button class="btn btn-secondary" id="reset-btn">
+            <img src="../../assets/icons/refresh.svg" alt="" style="width: 16px; height: 16px; vertical-align: middle; stroke: white; margin-right: 5px;"> Reset Form
+        </button>
+        <button class="btn btn-success" id="download-btn">
+            <img src="../../assets/icons/download.svg" alt="" style="width: 16px; height: 16px; vertical-align: middle; stroke: white; margin-right: 5px;"> Download Filled PDF
+        </button>
+    </div>
+
+    <input type="file" id="csv-import-input" accept=".csv" multiple style="display: none;">
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="script.js"></script>
     <script>
         // Theme toggle functionality
