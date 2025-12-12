@@ -1,8 +1,0 @@
-{
-  "id": "cms-to-sif",
-  "name": "CMS to SIF Converter",
-  "description": "Automatically extract data from CMS reports and fill Service Inspection Forms using client-side Python",
-  "icon": "<i class=\"fa-solid fa-file-circle-check\"></i>",
-  "category": "PDF Tools",
-  "technologies": ["PyScript", "Python", "pypdf"]
-}
