@@ -20,6 +20,20 @@ const fieldCount = document.getElementById('field-count');
 const exportCsvBtn = document.getElementById('export-csv-btn');
 const importCsvBtn = document.getElementById('import-csv-btn');
 const csvImportInput = document.getElementById('csv-import-input');
+const clearBtn = document.getElementById('clear-btn');
+const resetBtn = document.getElementById('reset-btn');
+const downloadBtn = document.getElementById('download-btn');
+
+function setActionButtonsEnabled(enabled) {
+    [exportCsvBtn, importCsvBtn, clearBtn, resetBtn, downloadBtn].forEach(btn => {
+        if (btn) {
+            btn.disabled = !enabled;
+        }
+    });
+}
+
+// Disable action buttons until a PDF is loaded
+setActionButtonsEnabled(false);
 
 uploadArea.addEventListener('click', () => fileInput.click());
 
