@@ -392,6 +392,10 @@
         body.light-mode .btn-secondary:hover {
             background-color: #545b62;
         }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
         .button-group {
             position: fixed;
             bottom: 0;
@@ -529,7 +533,7 @@
             <div class="stats">
                 <p><strong id="field-count">0</strong> form fields found</p>
             </div>
-            
+
             <h2>Fill Out Form Fields</h2>
             <div id="form-fields" class="form-fields"></div>
 

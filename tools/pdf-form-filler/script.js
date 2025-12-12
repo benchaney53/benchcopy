@@ -67,10 +67,11 @@ async function handleFile(file) {
     fileName.textContent = file.name;
     fileSize.textContent = formatFileSize(file.size);
     fileInfo.classList.add('visible');
-    
+
     loading.classList.add('visible');
     formSection.classList.remove('visible');
-    
+    setActionButtonsEnabled(false);
+
     try {
         const arrayBuffer = await file.arrayBuffer();
         uploadedPdfBytes = new Uint8Array(arrayBuffer);
@@ -83,10 +84,11 @@ async function handleFile(file) {
         
         // Extract form fields
         await extractFormFields();
-        
+
         loading.classList.remove('visible');
         formSection.classList.add('visible');
-        
+        setActionButtonsEnabled(true);
+
     } catch (error) {
         alert('Error loading PDF: ' + error.message);
         console.error(error);
