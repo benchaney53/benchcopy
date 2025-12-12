@@ -7,9 +7,18 @@ let pdfJsDoc = null;
 let formFields = [];
 let originalFormFields = [];
 
+function isProbablyPdf(bytes) {
+    if (!bytes || bytes.length < 5) return false;
+    const header = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
+    return header === '%PDF-';
+}
+
 function requirePdfLoaded() {
     if (!uploadedPdfBytes || !(uploadedPdfBytes instanceof Uint8Array) || uploadedPdfBytes.length === 0) {
         throw new Error('No PDF is loaded. Please upload a PDF file before importing CSV.');
+    }
+    if (!isProbablyPdf(uploadedPdfBytes)) {
+        throw new Error('The loaded file is not a valid PDF (missing %PDF header). Please re-upload a PDF.');
     }
     return uploadedPdfBytes;
 }
@@ -96,6 +105,10 @@ async function handleFile(file) {
     try {
         const arrayBuffer = await file.arrayBuffer();
         uploadedPdfBytes = new Uint8Array(arrayBuffer);
+
+        if (!isProbablyPdf(uploadedPdfBytes)) {
+            throw new Error('Selected file is not a valid PDF (missing %PDF header).');
+        }
         
         // Load PDF with pdf-lib
         pdfDoc = await PDFLib.PDFDocument.load(uploadedPdfBytes);
