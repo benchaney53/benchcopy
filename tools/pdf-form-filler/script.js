@@ -70,14 +70,16 @@ function openPdfDb() {
 
 async function saveLastPdf(bytes, name) {
     try {
+        // Clone to avoid detached buffer issues
+        const clone = bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes);
         const db = await openPdfDb();
         const tx = db.transaction(PDF_STORE, 'readwrite');
         tx.objectStore(PDF_STORE).put({
             id: PDF_KEY,
             name,
-            size: bytes.byteLength,
+            size: clone.byteLength,
             ts: Date.now(),
-            bytes
+            bytes: clone.buffer
         });
     } catch (err) {
         console.warn('Could not persist PDF locally:', err);
@@ -260,7 +262,7 @@ async function handlePdfBytes(name, bytes, skipSave = false, sizeOverride = null
         setActionButtonsEnabled(true);
 
         if (!skipSave) {
-            saveLastPdf(uploadedPdfBytes, name);
+            await saveLastPdf(uploadedPdfBytes, name);
         }
     } catch (error) {
         alert('Error loading PDF: ' + error.message);
