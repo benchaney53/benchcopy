@@ -17,6 +17,9 @@ const loading = document.getElementById('loading');
 const formSection = document.getElementById('form-section');
 const formFieldsContainer = document.getElementById('form-fields');
 const fieldCount = document.getElementById('field-count');
+const exportCsvBtn = document.getElementById('export-csv-btn');
+const importCsvBtn = document.getElementById('import-csv-btn');
+const csvImportInput = document.getElementById('csv-import-input');
 
 uploadArea.addEventListener('click', () => fileInput.click());
 
@@ -640,6 +643,205 @@ document.getElementById('reset-btn').addEventListener('click', () => {
             }
         });
     }
+});
+
+function csvEscape(value) {
+    const stringValue = (value ?? '').toString();
+    if (/[,"\n]/.test(stringValue)) {
+        return '"' + stringValue.replace(/"/g, '""') + '"';
+    }
+    return stringValue;
+}
+
+function exportFieldsToCsv() {
+    if (!formFields.length) {
+        alert('Please upload a PDF with fields before exporting CSV.');
+        return;
+    }
+
+    const activeFields = formFields.filter(field => !field.deleted);
+    const rows = activeFields.map(field => {
+        let value = field.value;
+        if (Array.isArray(value)) {
+            value = value.join('; ');
+        } else if (typeof value === 'boolean') {
+            value = value ? 'true' : 'false';
+        }
+        return `${csvEscape(field.name)},${csvEscape(value ?? '')}`;
+    });
+
+    const csvContent = ['Title,Value', ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${fileName.textContent || 'form-fields'}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function splitCsvLine(line) {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+
+        if (inQuotes) {
+            if (char === '"') {
+                if (line[i + 1] === '"') {
+                    current += '"';
+                    i++;
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                current += char;
+            }
+        } else {
+            if (char === '"') {
+                inQuotes = true;
+            } else if (char === ',') {
+                result.push(current);
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+    }
+
+    result.push(current);
+    return result;
+}
+
+function parseCsvContent(content) {
+    const lines = content.split(/\r?\n/).filter(line => line.trim().length > 0);
+    if (!lines.length) {
+        return { headers: [], rows: [] };
+    }
+
+    const headers = splitCsvLine(lines[0]).map(h => h.trim());
+    const rows = lines.slice(1).map(line => splitCsvLine(line));
+    return { headers, rows };
+}
+
+function csvRowsToDataMap(parsedCsv) {
+    const titleIndex = parsedCsv.headers.findIndex(h => h.toLowerCase() === 'title' || h.toLowerCase() === 'field');
+    const valueIndex = parsedCsv.headers.findIndex(h => h.toLowerCase() === 'value');
+
+    const dataMap = {};
+
+    parsedCsv.rows.forEach(values => {
+        const title = values[titleIndex !== -1 ? titleIndex : 0];
+        const value = values[valueIndex !== -1 ? valueIndex : 1];
+
+        if (title && title.trim().length > 0) {
+            dataMap[title.trim()] = value ?? '';
+        }
+    });
+
+    return dataMap;
+}
+
+async function generateFilledPdf(dataMap) {
+    const tempPdf = await PDFLib.PDFDocument.load(uploadedPdfBytes);
+    const form = tempPdf.getForm();
+    const pdfFields = form.getFields();
+    const pdfFieldMap = {};
+    pdfFields.forEach(field => {
+        pdfFieldMap[field.getName()] = field;
+    });
+
+    for (const fieldInfo of formFields) {
+        if (fieldInfo.deleted) continue;
+        const pdfField = pdfFieldMap[fieldInfo.name];
+        if (!pdfField) continue;
+
+        const value = dataMap[fieldInfo.name];
+        if (value === undefined) continue;
+
+        try {
+            if (fieldInfo.type === 'PDFTextField') {
+                pdfField.setText(value ?? '');
+            } else if (fieldInfo.type === 'PDFCheckBox') {
+                const isChecked = typeof value === 'string' ? value.trim().toLowerCase() === 'true' : !!value;
+                if (isChecked) {
+                    pdfField.check();
+                } else {
+                    pdfField.uncheck();
+                }
+            } else if (fieldInfo.type === 'PDFDropdown') {
+                if (value !== undefined && value !== null && value !== '') {
+                    pdfField.select(Array.isArray(value) ? value[0] : value);
+                }
+            } else if (fieldInfo.type === 'PDFRadioGroup') {
+                if (value !== undefined && value !== null && value !== '') {
+                    pdfField.select(Array.isArray(value) ? value[0] : value);
+                }
+            } else {
+                pdfField.setText(value ?? '');
+            }
+        } catch (error) {
+            console.error(`Error setting value for field ${fieldInfo.name}:`, error);
+        }
+    }
+
+    return await tempPdf.save();
+}
+
+async function processCsvImports(files) {
+    if (!uploadedPdfBytes) {
+        alert('Please upload a PDF before importing CSV files.');
+        return;
+    }
+
+    if (!files.length) return;
+
+    loading.classList.add('visible');
+
+    try {
+        const zip = new JSZip();
+
+        for (const file of files) {
+            const content = await file.text();
+            const parsed = parseCsvContent(content);
+            const dataMap = csvRowsToDataMap(parsed);
+
+            if (Object.keys(dataMap).length === 0) {
+                console.warn(`No data found in CSV ${file.name}`);
+                continue;
+            }
+
+            const pdfBytes = await generateFilledPdf(dataMap);
+            const fileBaseName = file.name.replace(/\.csv$/i, '') || 'filled-form';
+            zip.file(`filled_${fileBaseName}.pdf`, pdfBytes);
+        }
+
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${fileName.textContent || 'filled-forms'}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        alert('Error processing CSV imports: ' + error.message);
+        console.error(error);
+    } finally {
+        loading.classList.remove('visible');
+    }
+}
+
+exportCsvBtn.addEventListener('click', exportFieldsToCsv);
+importCsvBtn.addEventListener('click', () => csvImportInput.click());
+csvImportInput.addEventListener('change', (event) => {
+    processCsvImports(Array.from(event.target.files));
+    event.target.value = '';
 });
 // Download filled PDF
 document.getElementById('download-btn').addEventListener('click', async () => {
