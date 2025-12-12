@@ -2,6 +2,7 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 let uploadedPdfBytes = null;
+let basePdfBytes = null;
 let pdfDoc = null;
 let pdfJsDoc = null;
 let formFields = [];
@@ -28,13 +29,14 @@ async function ensureValidPdfBytes() {
 }
 
 function requirePdfLoaded() {
-    if (!uploadedPdfBytes || !(uploadedPdfBytes instanceof Uint8Array) || uploadedPdfBytes.length === 0) {
+    const bytes = basePdfBytes || uploadedPdfBytes;
+    if (!bytes || !(bytes instanceof Uint8Array) || bytes.length === 0) {
         throw new Error('No PDF is loaded. Please upload a PDF file before importing CSV.');
     }
-    if (!isProbablyPdf(uploadedPdfBytes)) {
+    if (!isProbablyPdf(bytes)) {
         throw new Error('The loaded file is not a valid PDF (missing %PDF header). Please re-upload a PDF.');
     }
-    return uploadedPdfBytes;
+    return bytes;
 }
 
 // Upload handling
@@ -126,6 +128,7 @@ async function handleFile(file) {
         
         // Load PDF with pdf-lib
         pdfDoc = await PDFLib.PDFDocument.load(uploadedPdfBytes);
+        basePdfBytes = uploadedPdfBytes.slice(); // keep pristine copy for downstream fills
         
         // Load PDF with PDF.js for rendering
         pdfJsDoc = await pdfjsLib.getDocument({ data: uploadedPdfBytes }).promise;
@@ -802,7 +805,7 @@ function csvRowsToDataMap(parsedCsv) {
 }
 
 async function generateFilledPdf(dataMap, baseBytes) {
-    const bytes = baseBytes || requirePdfLoaded();
+    const bytes = baseBytes || basePdfBytes || requirePdfLoaded();
     const tempPdf = await PDFLib.PDFDocument.load(bytes);
     const form = tempPdf.getForm();
     const pdfFields = form.getFields();
