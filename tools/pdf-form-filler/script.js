@@ -35,6 +35,12 @@ function findCaseInsensitiveOption(options, value) {
     return null;
 }
 
+function toWinAnsiSafe(value) {
+    const str = (value ?? '').toString();
+    // Replace characters outside WinAnsi with '?'
+    return str.replace(/[^\x00-\xFF]/g, '?');
+}
+
 async function ensureValidPdfBytes() {
     const bytes = requirePdfLoaded();
     if (!isProbablyPdf(bytes)) {
@@ -809,6 +815,30 @@ function csvRowsToDataMap(parsedCsv) {
     const normalizedHeaders = headers.map(normalizeFieldName);
     const dataMaps = [];
 
+    const titleIdx = normalizedHeaders.findIndex(h => h === 'title' || h === 'field');
+    const valueIdx = normalizedHeaders.findIndex(h => h === 'value');
+    const isTitleValueMode = titleIdx !== -1 && valueIdx !== -1 && headers.length <= 3;
+
+    if (isTitleValueMode) {
+        parsedCsv.rows.forEach((values, rowIdx) => {
+            const title = values[titleIdx] ?? '';
+            const val = values[valueIdx] ?? '';
+            const titleNorm = normalizeFieldName(title);
+            const hasData = (title && title.trim().length > 0) || (val && val.toString().trim().length > 0);
+            if (!hasData) {
+                console.warn(`Row ${rowIdx + 2} is empty and was skipped.`);
+                return;
+            }
+            const map = {};
+            const normMap = {};
+            map[title] = val;
+            normMap[titleNorm] = val;
+            map.__normalized = normMap;
+            dataMaps.push(map);
+        });
+        return dataMaps;
+    }
+
     parsedCsv.rows.forEach((values, rowIdx) => {
         const map = {};
         const normalizedMap = {};
@@ -861,7 +891,7 @@ async function generateFilledPdf(dataMap, baseBytes) {
 
         try {
             if (fieldInfo.type === 'PDFTextField') {
-                const textVal = (value ?? '').toString();
+                const textVal = toWinAnsiSafe(value);
                 pdfField.setText(textVal);
                 logFill('Set text', fieldInfo.name, '=>', textVal);
             } else if (fieldInfo.type === 'PDFCheckBox') {
@@ -887,7 +917,7 @@ async function generateFilledPdf(dataMap, baseBytes) {
                     logFill('Set radio', fieldInfo.name, '=>', match);
                 }
             } else {
-                const textVal = (value ?? '').toString();
+                const textVal = toWinAnsiSafe(value);
                 pdfField.setText(textVal);
                 logFill('Set fallback text', fieldInfo.name, '=>', textVal);
             }
@@ -897,7 +927,11 @@ async function generateFilledPdf(dataMap, baseBytes) {
     }
 
     // Refresh appearances so values render in output
-    form.updateFieldAppearances(helvetica);
+    try {
+        form.updateFieldAppearances(helvetica);
+    } catch (err) {
+        console.warn('Failed to update field appearances; values still set:', err);
+    }
 
     return await tempPdf.save();
 }
