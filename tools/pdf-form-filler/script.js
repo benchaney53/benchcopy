@@ -7,6 +7,13 @@ let pdfJsDoc = null;
 let formFields = [];
 let originalFormFields = [];
 
+function requirePdfLoaded() {
+    if (!uploadedPdfBytes || !(uploadedPdfBytes instanceof Uint8Array) || uploadedPdfBytes.length === 0) {
+        throw new Error('No PDF is loaded. Please upload a PDF file before importing CSV.');
+    }
+    return uploadedPdfBytes;
+}
+
 // Upload handling
 const uploadArea = document.getElementById('upload-area');
 const fileInput = document.getElementById('file-input');
@@ -107,6 +114,7 @@ async function handleFile(file) {
         alert('Error loading PDF: ' + error.message);
         console.error(error);
         loading.classList.remove('visible');
+        setActionButtonsEnabled(false);
     }
 }
 
@@ -767,7 +775,8 @@ function csvRowsToDataMap(parsedCsv) {
 }
 
 async function generateFilledPdf(dataMap) {
-    const tempPdf = await PDFLib.PDFDocument.load(uploadedPdfBytes);
+    const baseBytes = requirePdfLoaded();
+    const tempPdf = await PDFLib.PDFDocument.load(baseBytes);
     const form = tempPdf.getForm();
     const pdfFields = form.getFields();
     const pdfFieldMap = {};
@@ -813,12 +822,14 @@ async function generateFilledPdf(dataMap) {
 }
 
 async function processCsvImports(files) {
-    if (!uploadedPdfBytes) {
-        alert('Please upload a PDF before importing CSV files.');
+    if (!files.length) return;
+
+    try {
+        requirePdfLoaded();
+    } catch (err) {
+        alert(err.message);
         return;
     }
-
-    if (!files.length) return;
 
     loading.classList.add('visible');
 
