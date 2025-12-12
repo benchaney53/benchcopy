@@ -86,6 +86,7 @@ async function saveLastPdf(bytes, name) {
     try {
         const clone = cloneBytesSafe(bytes);
         if (!clone) return;
+        const blob = new Blob([clone], { type: 'application/pdf' });
         const db = await openPdfDb();
         const tx = db.transaction(PDF_STORE, 'readwrite');
         tx.objectStore(PDF_STORE).put({
@@ -93,7 +94,7 @@ async function saveLastPdf(bytes, name) {
             name,
             size: clone.byteLength,
             ts: Date.now(),
-            bytes: clone.buffer
+            blob
         });
     } catch (err) {
         console.warn('Could not persist PDF locally:', err);
@@ -129,8 +130,10 @@ async function restoreLastPdfIfAny() {
     try {
         setRestoreStatus('Restoring last PDF...', false);
         const cached = await loadLastPdf();
-        if (cached && cached.bytes) {
-            const cachedBytes = new Uint8Array(cached.bytes);
+        if (cached && (cached.blob || cached.bytes)) {
+            const cachedBytes = cached.blob
+                ? new Uint8Array(await cached.blob.arrayBuffer())
+                : new Uint8Array(cached.bytes);
             if (!cachedBytes.byteLength || !isProbablyPdf(cachedBytes)) {
                 console.warn('Cached PDF invalid or empty; clearing cache.');
                 await deleteLastPdf();
