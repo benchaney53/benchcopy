@@ -70,8 +70,19 @@ function openPdfDb() {
 
 async function saveLastPdf(bytes, name) {
     try {
-        // Clone to avoid detached buffer issues
-        const clone = bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes);
+        // Clone to avoid detached buffer issues. Use slice if available, else copy.
+        let clone;
+        if (bytes instanceof Uint8Array) {
+            try {
+                clone = bytes.slice();
+            } catch {
+                clone = new Uint8Array(bytes.buffer.slice(0));
+            }
+        } else if (bytes instanceof ArrayBuffer) {
+            clone = new Uint8Array(bytes.slice(0));
+        } else {
+            clone = new Uint8Array(bytes);
+        }
         const db = await openPdfDb();
         const tx = db.transaction(PDF_STORE, 'readwrite');
         tx.objectStore(PDF_STORE).put({
