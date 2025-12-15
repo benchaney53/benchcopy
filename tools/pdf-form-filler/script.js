@@ -2,7 +2,6 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 let uploadedPdfBytes = null;
-let basePdfBytes = null;
 let pdfDoc = null;
 let pdfJsDoc = null;
 let formFields = [];
@@ -172,7 +171,7 @@ async function ensureValidPdfBytes() {
 }
 
 function requirePdfLoaded() {
-    const bytes = basePdfBytes || uploadedPdfBytes;
+    const bytes = uploadedPdfBytes;
     if (!bytes || !(bytes instanceof Uint8Array) || bytes.length === 0) {
         throw new Error('No PDF is loaded. Please upload a PDF file before importing CSV.');
     }
@@ -290,7 +289,6 @@ async function handlePdfBytes(name, bytes, skipSave = false, sizeOverride = null
         
         // Load PDF with pdf-lib
         pdfDoc = await PDFLib.PDFDocument.load(stableBytes);
-        basePdfBytes = cloneBytesSafe(stableBytes) || stableBytes; // keep pristine copy for downstream fills
         
         // Load PDF with PDF.js for rendering
         pdfJsDoc = await pdfjsLib.getDocument({ data: stableBytes }).promise;
@@ -1007,7 +1005,8 @@ function csvRowsToDataMap(parsedCsv) {
 }
 
 async function generateFilledPdf(dataMap, baseBytes) {
-    const bytes = baseBytes || basePdfBytes || requirePdfLoaded();
+    const sourceBytes = baseBytes || requirePdfLoaded();
+    const bytes = cloneBytesSafe(sourceBytes) || sourceBytes;
     const tempPdf = await PDFLib.PDFDocument.load(bytes);
     const helvetica = await tempPdf.embedFont(PDFLib.StandardFonts.Helvetica);
     const form = tempPdf.getForm();
