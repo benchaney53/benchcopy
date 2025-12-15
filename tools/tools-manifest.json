@@ -1,17 +1,5 @@
 [
   {
-    "id": "cms-to-sif",
-    "name": "CMS to SIF Converter",
-    "description": "Automatically extract data from CMS reports and fill Service Inspection Forms using client-side Python",
-    "icon": "<i class=\"fa-solid fa-file-circle-check\"></i>",
-    "category": "PDF Tools",
-    "technologies": [
-      "PyScript",
-      "Python",
-      "pypdf"
-    ]
-  },
-  {
     "id": "job-book-checker",
     "name": "Job Book Files Checker",
     "description": "Check if a job book folder contains all required files and folders",
