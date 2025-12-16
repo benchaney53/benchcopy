@@ -352,19 +352,27 @@ async function handlePdfBytes(name, bytes, skipSave = false, sizeOverride = null
 
     try {
         uploadedPdfBytes = stableBytes;
+        console.log('[handlePdfBytes] Set uploadedPdfBytes, length:', uploadedPdfBytes.length);
 
         if (!isProbablyPdf(stableBytes)) {
             throw new Error('Selected file is not a valid PDF (missing %PDF header).');
         }
         
         // Load PDF with pdf-lib (make a copy since pdf-lib may modify)
-        pdfDoc = await PDFLib.PDFDocument.load(stableBytes.slice());
+        const pdfLibCopy = new Uint8Array(stableBytes);
+        console.log('[handlePdfBytes] Before pdf-lib load, uploadedPdfBytes.length:', uploadedPdfBytes.length);
+        pdfDoc = await PDFLib.PDFDocument.load(pdfLibCopy);
+        console.log('[handlePdfBytes] After pdf-lib load, uploadedPdfBytes.length:', uploadedPdfBytes.length);
         
         // Load PDF with PDF.js for rendering (make a copy since getDocument transfers the buffer)
-        pdfJsDoc = await pdfjsLib.getDocument({ data: stableBytes.slice() }).promise;
+        const pdfJsCopy = new Uint8Array(stableBytes);
+        console.log('[handlePdfBytes] Before pdf.js load, uploadedPdfBytes.length:', uploadedPdfBytes.length);
+        pdfJsDoc = await pdfjsLib.getDocument({ data: pdfJsCopy }).promise;
+        console.log('[handlePdfBytes] After pdf.js load, uploadedPdfBytes.length:', uploadedPdfBytes.length);
         
         // Extract form fields
         await extractFormFields();
+        console.log('[handlePdfBytes] After extractFormFields, uploadedPdfBytes.length:', uploadedPdfBytes.length);
 
         loading.classList.remove('visible');
         formSection.classList.add('visible');
