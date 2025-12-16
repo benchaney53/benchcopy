@@ -357,11 +357,11 @@ async function handlePdfBytes(name, bytes, skipSave = false, sizeOverride = null
             throw new Error('Selected file is not a valid PDF (missing %PDF header).');
         }
         
-        // Load PDF with pdf-lib
-        pdfDoc = await PDFLib.PDFDocument.load(stableBytes);
+        // Load PDF with pdf-lib (make a copy since pdf-lib may modify)
+        pdfDoc = await PDFLib.PDFDocument.load(stableBytes.slice());
         
-        // Load PDF with PDF.js for rendering
-        pdfJsDoc = await pdfjsLib.getDocument({ data: stableBytes }).promise;
+        // Load PDF with PDF.js for rendering (make a copy since getDocument transfers the buffer)
+        pdfJsDoc = await pdfjsLib.getDocument({ data: stableBytes.slice() }).promise;
         
         // Extract form fields
         await extractFormFields();
