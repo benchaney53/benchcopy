@@ -152,13 +152,14 @@ async function restoreLastPdfIfAny() {
     } finally {
         restoringFromStorage = false;
         // Clear status if nothing restored
-            if (!uploadedPdfBytes && restoreStatus && restoreStatus.textContent === 'Restoring last PDF...') {
-                setRestoreStatus('', false);
-            }
+        if (!uploadedPdfBytes && restoreStatus && restoreStatus.textContent === 'Restoring last PDF...') {
+            setRestoreStatus('', false);
+        }
     }
+
 }
 
-    async function clearLoadedPdf() {
+async function clearLoadedPdf() {
         try {
             // Clear in-memory PDF
             uploadedPdfBytes = null;
