@@ -310,6 +310,17 @@ fileInput.addEventListener('change', (e) => {
     }
 });
 
+// Clear button to remove loaded PDF and cache
+if (clearBtn) {
+    clearBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        if (confirm('Clear the loaded PDF and remove cached copy?')) {
+            await clearLoadedPdf();
+            setRestoreStatus('Cleared loaded PDF and cache', false);
+        }
+    });
+}
+
 function formatFileSize(bytes) {
     if (bytes < 1024) return bytes + ' bytes';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
@@ -401,15 +412,7 @@ async function extractFormFields() {
             rect: null
         };
 
-        
-            clearBtn.addEventListener('click', async (e) => {
-                e.preventDefault();
-                if (confirm('Clear the loaded PDF and remove cached copy?')) {
-                    await clearLoadedPdf();
-                    setRestoreStatus('Cleared loaded PDF and cache', false);
-                }
-            });
-        } 
+        // Try to get the page number and position for this field
         try {
             const acroField = field.acroField;
             if (acroField && acroField.dict) {
@@ -582,6 +585,7 @@ async function extractFormFields() {
     }))));
     
     console.log(`Created ${formFieldsContainer.children.length} form field elements`);
+}
 
 // Show page reference modal
 async function showPageReference(pageNumber, fieldName, rect) {
