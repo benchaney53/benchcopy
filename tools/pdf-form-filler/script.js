@@ -316,9 +316,9 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
-// Attempt to restore last PDF from local storage on load
+// Clear any cached PDF on page load (no auto-restore)
 (async () => {
-    await restoreLastPdfIfAny();
+    await deleteLastPdf();
 })();
 
 async function handlePdfBytes(name, bytes, skipSave = false, sizeOverride = null) {
