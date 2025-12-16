@@ -582,7 +582,6 @@ async function extractFormFields() {
     }))));
     
     console.log(`Created ${formFieldsContainer.children.length} form field elements`);
-}
 
 // Show page reference modal
 async function showPageReference(pageNumber, fieldName, rect) {
