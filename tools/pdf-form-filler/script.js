@@ -201,6 +201,7 @@ function requirePdfLoaded() {
     // It will accept Blob, ArrayBuffer or Uint8Array and convert to Uint8Array.
     return (async () => {
         let bytes = uploadedPdfBytes;
+        console.log('[requirePdfLoaded] uploadedPdfBytes:', bytes, 'type:', bytes ? bytes.constructor.name : 'null');
         if (!bytes) {
             throw new Error('No PDF is loaded. Please upload a PDF file before importing CSV.');
         }
