@@ -136,6 +136,8 @@ async function restoreLastPdfIfAny() {
             if (!cachedBytes.byteLength || !isProbablyPdf(cachedBytes)) {
                 console.warn('Cached PDF invalid or empty; clearing cache.');
                 await deleteLastPdf();
+                // Ensure any partial state is cleared from the UI
+                await clearLoadedPdf();
                 setRestoreStatus('Cached PDF was invalid; please upload again', true);
                 return;
             }
@@ -150,14 +152,37 @@ async function restoreLastPdfIfAny() {
     } finally {
         restoringFromStorage = false;
         // Clear status if nothing restored
-        if (!uploadedPdfBytes && restoreStatus && restoreStatus.textContent === 'Restoring last PDF...') {
-            setRestoreStatus('', false);
-        }
+            if (!uploadedPdfBytes && restoreStatus && restoreStatus.textContent === 'Restoring last PDF...') {
+                setRestoreStatus('', false);
+            }
     }
 }
 
+    async function clearLoadedPdf() {
+        try {
+            // Clear in-memory PDF
+            uploadedPdfBytes = null;
+            pdfDoc = null;
+            pdfJsDoc = null;
+
+            // Clear UI
+            fileInfo.classList.remove('visible');
+            fileName.textContent = '';
+            fileSize.textContent = '';
+            formSection.classList.remove('visible');
+            formFieldsContainer.innerHTML = '';
+            fieldCount.textContent = '0';
+            setActionButtonsEnabled(false);
+
+            // Remove cached PDF from IndexedDB as well
+            await deleteLastPdf();
+        } catch (err) {
+            console.warn('Error clearing loaded PDF:', err);
+        }
+    }
+
 async function ensureValidPdfBytes() {
-    const bytes = requirePdfLoaded();
+    const bytes = await requirePdfLoaded();
     if (!isProbablyPdf(bytes)) {
         throw new Error('The loaded file is not a valid PDF (missing %PDF header). Please re-upload a PDF.');
     }
@@ -171,14 +196,46 @@ async function ensureValidPdfBytes() {
 }
 
 function requirePdfLoaded() {
-    const bytes = uploadedPdfBytes;
-    if (!bytes || !(bytes instanceof Uint8Array) || bytes.length === 0) {
-        throw new Error('No PDF is loaded. Please upload a PDF file before importing CSV.');
-    }
-    if (!isProbablyPdf(bytes)) {
-        throw new Error('The loaded file is not a valid PDF (missing %PDF header). Please re-upload a PDF.');
-    }
-    return bytes;
+    // Keep a backwards-compatible function signature by making this async-capable
+    // It will accept Blob, ArrayBuffer or Uint8Array and convert to Uint8Array.
+    return (async () => {
+        let bytes = uploadedPdfBytes;
+        if (!bytes) {
+            throw new Error('No PDF is loaded. Please upload a PDF file before importing CSV.');
+        }
+
+        // If it's a Blob (e.g., restored from IndexedDB), convert to Uint8Array
+        if (bytes instanceof Blob) {
+            try {
+                const ab = await bytes.arrayBuffer();
+                bytes = new Uint8Array(ab);
+                uploadedPdfBytes = bytes;
+            } catch (err) {
+                console.error('Failed to read PDF blob:', err);
+                throw new Error('No PDF is loaded. Please upload a PDF file before importing CSV.');
+            }
+        } else if (bytes instanceof ArrayBuffer) {
+            bytes = new Uint8Array(bytes);
+            uploadedPdfBytes = bytes;
+        } else if (!(bytes instanceof Uint8Array)) {
+            try {
+                bytes = new Uint8Array(bytes);
+                uploadedPdfBytes = bytes;
+            } catch (err) {
+                throw new Error('No PDF is loaded. Please upload a PDF file before importing CSV.');
+            }
+        }
+
+        if (!bytes || bytes.length === 0) {
+            throw new Error('No PDF is loaded. Please upload a PDF file before importing CSV.');
+        }
+
+        if (!isProbablyPdf(bytes)) {
+            throw new Error('The loaded file is not a valid PDF (missing %PDF header). Please re-upload a PDF.');
+        }
+
+        return bytes;
+    })();
 }
 
 // Upload handling
@@ -342,8 +399,16 @@ async function extractFormFields() {
             pageNumber: null,
             rect: null
         };
+
         
-        // Try to get the page number and position for this field
+            clearBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                if (confirm('Clear the loaded PDF and remove cached copy?')) {
+                    await clearLoadedPdf();
+                    setRestoreStatus('Cleared loaded PDF and cache', false);
+                }
+            });
+        } 
         try {
             const acroField = field.acroField;
             if (acroField && acroField.dict) {
@@ -1005,8 +1070,8 @@ function csvRowsToDataMap(parsedCsv) {
 }
 
 async function generateFilledPdf(dataMap, baseBytes) {
-    const sourceBytes = baseBytes || requirePdfLoaded();
-    const bytes = cloneBytesSafe(sourceBytes) || sourceBytes;
+    const sourceBytes = baseBytes || await requirePdfLoaded();
+    const bytes = cloneBytesSafe(sourceBytes) || (sourceBytes instanceof Uint8Array ? sourceBytes : new Uint8Array(sourceBytes));
     const tempPdf = await PDFLib.PDFDocument.load(bytes);
     const helvetica = await tempPdf.embedFont(PDFLib.StandardFonts.Helvetica);
     const form = tempPdf.getForm();
