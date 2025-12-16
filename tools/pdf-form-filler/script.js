@@ -1,5 +1,7 @@
+// PDF Form Filler - Version 2024.12.16.1
 // PDF.js setup
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+console.log('[PDF Form Filler] Script loaded - Version 2024.12.16.1');
 
 let uploadedPdfBytes = null;
 let pdfDoc = null;
