@@ -516,6 +516,123 @@
         body.light-mode .restore-status.error {
             color: #c82333;
         }
+
+        /* Custom PDF Naming Section */
+        .naming-section {
+            margin-top: 20px;
+            padding: 20px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            border: 1px solid #555;
+        }
+        body.light-mode .naming-section {
+            background: #f8f9fa;
+            border-color: #ddd;
+        }
+        .naming-section h3 {
+            margin: 0 0 15px 0;
+            color: #e0e0e0;
+            font-size: 16px;
+        }
+        body.light-mode .naming-section h3 {
+            color: #333;
+        }
+        .naming-input-container {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .naming-input {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #555;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+            background-color: #3a3a3a;
+            color: #e0e0e0;
+            transition: border-color 0.3s;
+        }
+        body.light-mode .naming-input {
+            border-color: #ddd;
+            background-color: white;
+            color: #333;
+        }
+        .naming-input:focus {
+            outline: none;
+            border-color: #88b0ff;
+        }
+        body.light-mode .naming-input:focus {
+            border-color: #007bff;
+        }
+        .naming-input.drag-over {
+            border-color: #5a9068;
+            background-color: rgba(90, 144, 104, 0.1);
+        }
+        .naming-preview {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 15px;
+            padding: 8px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            word-break: break-all;
+        }
+        body.light-mode .naming-preview {
+            background: #e9ecef;
+            color: #666;
+        }
+        .naming-preview strong {
+            color: #88b0ff;
+        }
+        body.light-mode .naming-preview strong {
+            color: #007bff;
+        }
+        .field-variables {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .field-variables-label {
+            width: 100%;
+            font-size: 13px;
+            color: #888;
+            margin-bottom: 5px;
+        }
+        body.light-mode .field-variables-label {
+            color: #666;
+        }
+        .field-variable {
+            padding: 6px 12px;
+            background: #4a4a4a;
+            border: 1px solid #666;
+            border-radius: 20px;
+            font-size: 12px;
+            color: #e0e0e0;
+            cursor: grab;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+        body.light-mode .field-variable {
+            background: #e9ecef;
+            border-color: #ccc;
+            color: #333;
+        }
+        .field-variable:hover {
+            background: #5a5a5a;
+            border-color: #88b0ff;
+            transform: translateY(-1px);
+        }
+        body.light-mode .field-variable:hover {
+            background: #dee2e6;
+            border-color: #007bff;
+        }
+        .field-variable:active {
+            cursor: grabbing;
+        }
+        .field-variable.dragging {
+            opacity: 0.5;
+        }
     </style>
 </head>
 <body>
@@ -564,6 +681,20 @@
             <h2>Fill Out Form Fields</h2>
             <div id="form-fields" class="form-fields"></div>
 
+            <div class="naming-section" id="naming-section">
+                <h3>📁 Bulk PDF Naming Template</h3>
+                <div class="naming-input-container">
+                    <input type="text" class="naming-input" id="naming-template" placeholder="e.g., P25 WTG Reliability Test [WTG No] - [Date]" value="filled_[Row]">
+                </div>
+                <div class="naming-preview" id="naming-preview">
+                    <strong>Preview:</strong> <span id="preview-text">filled_1.pdf</span>
+                </div>
+                <div class="field-variables" id="field-variables">
+                    <div class="field-variables-label">Click or drag variables into the template above:</div>
+                    <span class="field-variable" data-variable="[Row]" draggable="true">[Row]</span>
+                </div>
+            </div>
+
             <div class="button-group">
                 <button class="btn btn-secondary" id="export-csv-btn">
                     <img src="../../assets/icons/download.svg" alt="" style="width: 16px; height: 16px; vertical-align: middle; stroke: white; margin-right: 5px;"> Export CSV
@@ -584,7 +715,7 @@
         </div>
     </div>
 
-    <div class="version-tag">PDF Form Filler v0.4.0</div>
+    <div class="version-tag">PDF Form Filler v0.5.0</div>
 
     <input type="file" id="csv-import-input" accept=".csv" multiple style="display: none;">
 

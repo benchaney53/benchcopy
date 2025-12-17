@@ -1,7 +1,7 @@
-// PDF Form Filler - Version 2024.12.16.1
+// PDF Form Filler - Version 2024.12.17.2
 // PDF.js setup
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-console.log('[PDF Form Filler] Script loaded - Version 2024.12.16.1');
+console.log('[PDF Form Filler] Script loaded - Version 2024.12.17.2');
 
 let uploadedPdfBytes = null;
 let pdfDoc = null;
@@ -259,11 +259,171 @@ const csvImportInput = document.getElementById('csv-import-input');
 const clearBtn = document.getElementById('clear-btn');
 const resetBtn = document.getElementById('reset-btn');
 const downloadBtn = document.getElementById('download-btn');
+const namingTemplate = document.getElementById('naming-template');
+const namingPreview = document.getElementById('naming-preview');
+const previewText = document.getElementById('preview-text');
+const fieldVariables = document.getElementById('field-variables');
 
 function setActionButtonsEnabled(enabled) {
     [exportCsvBtn, importCsvBtn, clearBtn, resetBtn, downloadBtn].forEach(btn => {
         if (btn) {
             btn.disabled = !enabled;
+        }
+    });
+}
+
+// Naming template functionality
+function updateFieldVariables() {
+    if (!fieldVariables) return;
+    
+    // Keep the label and [Row] variable
+    fieldVariables.innerHTML = `
+        <div class="field-variables-label">Click or drag variables into the template above:</div>
+        <span class="field-variable" data-variable="[Row]" draggable="true">[Row]</span>
+    `;
+    
+    // Add a variable for each form field
+    formFields.forEach(field => {
+        const varSpan = document.createElement('span');
+        varSpan.className = 'field-variable';
+        varSpan.draggable = true;
+        const varName = `[${field.name}]`;
+        varSpan.dataset.variable = varName;
+        varSpan.textContent = varName;
+        fieldVariables.appendChild(varSpan);
+    });
+    
+    // Attach event listeners to all variables
+    attachVariableListeners();
+}
+
+function attachVariableListeners() {
+    document.querySelectorAll('.field-variable').forEach(varEl => {
+        // Click to insert at cursor
+        varEl.addEventListener('click', () => {
+            insertVariableAtCursor(varEl.dataset.variable);
+        });
+        
+        // Drag start
+        varEl.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', varEl.dataset.variable);
+            e.dataTransfer.effectAllowed = 'copy';
+            varEl.classList.add('dragging');
+        });
+        
+        varEl.addEventListener('dragend', () => {
+            varEl.classList.remove('dragging');
+        });
+    });
+}
+
+function insertVariableAtCursor(variable) {
+    if (!namingTemplate) return;
+    
+    const start = namingTemplate.selectionStart;
+    const end = namingTemplate.selectionEnd;
+    const text = namingTemplate.value;
+    
+    namingTemplate.value = text.substring(0, start) + variable + text.substring(end);
+    
+    // Move cursor to after the inserted variable
+    const newPos = start + variable.length;
+    namingTemplate.setSelectionRange(newPos, newPos);
+    namingTemplate.focus();
+    
+    updateNamingPreview();
+}
+
+function updateNamingPreview(sampleData = null) {
+    if (!namingTemplate || !previewText) return;
+    
+    let template = namingTemplate.value || 'filled_[Row]';
+    let preview = template;
+    
+    // Replace [Row] with sample row number
+    preview = preview.replace(/\[Row\]/gi, '1');
+    
+    // Replace field variables with sample values
+    if (sampleData) {
+        for (const [key, value] of Object.entries(sampleData)) {
+            const regex = new RegExp(`\\[${escapeRegExp(key)}\\]`, 'gi');
+            preview = preview.replace(regex, value || '');
+        }
+    } else {
+        // Use current form field values for preview
+        formFields.forEach(field => {
+            const regex = new RegExp(`\\[${escapeRegExp(field.name)}\\]`, 'gi');
+            preview = preview.replace(regex, field.value || `<${field.name}>`);
+        });
+    }
+    
+    // Clean up any remaining unresolved variables for display
+    preview = preview.replace(/\[([^\]]+)\]/g, '<$1>');
+    
+    previewText.textContent = preview + '.pdf';
+}
+
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function generatePdfName(template, rowNumber, dataMap) {
+    let name = template || 'filled_[Row]';
+    
+    // Replace [Row] variable
+    name = name.replace(/\[Row\]/gi, rowNumber.toString());
+    
+    // Replace field variables with actual values
+    for (const [key, value] of Object.entries(dataMap)) {
+        const regex = new RegExp(`\\[${escapeRegExp(key)}\\]`, 'gi');
+        name = name.replace(regex, value || '');
+    }
+    
+    // Remove any remaining unresolved variables
+    name = name.replace(/\[[^\]]+\]/g, '');
+    
+    // Clean up the filename (remove invalid characters)
+    name = name.replace(/[<>:"/\\|?*]/g, '_').trim();
+    
+    // Ensure we have a valid filename
+    if (!name) name = `filled_${rowNumber}`;
+    
+    return name;
+}
+
+// Set up naming template event listeners
+if (namingTemplate) {
+    namingTemplate.addEventListener('input', () => updateNamingPreview());
+    
+    namingTemplate.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        namingTemplate.classList.add('drag-over');
+    });
+    
+    namingTemplate.addEventListener('dragleave', () => {
+        namingTemplate.classList.remove('drag-over');
+    });
+    
+    namingTemplate.addEventListener('drop', (e) => {
+        e.preventDefault();
+        namingTemplate.classList.remove('drag-over');
+        
+        const variable = e.dataTransfer.getData('text/plain');
+        if (variable) {
+            // Get drop position within the input
+            const rect = namingTemplate.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            
+            // Approximate character position based on click position
+            const charWidth = namingTemplate.scrollWidth / namingTemplate.value.length || 8;
+            let pos = Math.round(x / charWidth);
+            pos = Math.max(0, Math.min(pos, namingTemplate.value.length));
+            
+            const text = namingTemplate.value;
+            namingTemplate.value = text.substring(0, pos) + variable + text.substring(pos);
+            
+            updateNamingPreview();
         }
     });
 }
@@ -596,6 +756,10 @@ async function extractFormFields() {
     }))));
     
     console.log(`Created ${formFieldsContainer.children.length} form field elements`);
+    
+    // Update the naming template variables
+    updateFieldVariables();
+    updateNamingPreview();
 }
 
 // Show page reference modal
@@ -1183,12 +1347,13 @@ async function processCsvImports(files) {
                 continue;
             }
 
-            const fileBaseName = file.name.replace(/\.csv$/i, '') || 'filled-form';
+            const template = namingTemplate ? namingTemplate.value : 'filled_[Row]';
             let rowNumber = 1;
 
             for (const dataMap of dataMaps) {
                 const pdfBytes = await generateFilledPdf(dataMap, validatedBytes);
-                zip.file(`filled_${fileBaseName}_row${rowNumber}.pdf`, pdfBytes);
+                const pdfName = generatePdfName(template, rowNumber, dataMap);
+                zip.file(`${pdfName}.pdf`, pdfBytes);
                 pdfCount += 1;
                 rowNumber += 1;
             }
@@ -1203,7 +1368,10 @@ async function processCsvImports(files) {
         const url = URL.createObjectURL(zipBlob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${fileName.textContent || 'filled-forms'}.zip`;
+        // Standardized zip name with date/time
+        const now = new Date();
+        const timestamp = now.toISOString().slice(0, 19).replace('T', ' ').replace(/:/g, '-');
+        a.download = `Bulk PDF ${timestamp}.zip`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
