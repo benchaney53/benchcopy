@@ -895,7 +895,16 @@
                 pyodide = await loadPyodide();
                 log('Pyodide loaded. Installing packages...', 'info');
                 
-                await pyodide.loadPackage(['pandas', 'numpy', 'openpyxl']);
+                // Load built-in packages first
+                await pyodide.loadPackage(['pandas', 'numpy', 'micropip']);
+                log('Core packages installed: pandas, numpy', 'success');
+                
+                // Install openpyxl via micropip (not a built-in Pyodide package)
+                log('Installing openpyxl via micropip...', 'info');
+                await pyodide.runPythonAsync(`
+                    import micropip
+                    await micropip.install('openpyxl')
+                `);
                 log('Packages installed: pandas, numpy, openpyxl', 'success');
                 
                 // Load the reliability test Python code
