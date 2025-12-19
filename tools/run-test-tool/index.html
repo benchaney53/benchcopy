@@ -920,8 +920,15 @@
                     throw new Error(`Failed to fetch script: ${response.status} ${response.statusText}`);
                 }
                 const code = await response.text();
-                log('Loading Python script...', 'info');
-                await pyodide.runPythonAsync(code);
+                log('Loading Python script (' + code.length + ' chars)...', 'info');
+                
+                try {
+                    await pyodide.runPythonAsync(code);
+                } catch (pythonError) {
+                    log(`Python execution error: ${pythonError.message}`, 'error');
+                    console.error('Python error details:', pythonError);
+                    return;
+                }
                 
                 // Verify the function is defined
                 const check = await pyodide.runPythonAsync(`
@@ -931,6 +938,11 @@
                     log('Reliability test module loaded', 'success');
                 } else {
                     log('Warning: run_browser_analysis not found in module', 'warning');
+                    // List what IS defined
+                    const funcs = await pyodide.runPythonAsync(`
+[x for x in dir() if not x.startswith('_')]
+                    `);
+                    log('Defined names: ' + funcs.toJs().join(', '), 'info');
                 }
             } catch (error) {
                 log(`Failed to load Python script: ${error.message}`, 'error');
@@ -944,7 +956,8 @@
         async function runAnalysis() {
             if (!pyodide || !uploadedFile) return;
 
-            clearConsole();
+            // Don't clear console so we can see loading errors
+            // clearConsole();
             log('Starting analysis...', 'info');
             setStatus('Reading file...', 'loading', 10);
             runBtn.disabled = true;
