@@ -1,0 +1,8 @@
+{
+  "id": "run-test-tool",
+  "name": "Run Test Tool",
+  "description": "Find optimal reliability and HOTS test windows from SCADA data. Analyzes WTG availability, power output, and category compliance.",
+  "icon": "<i class=\"fa-solid fa-bolt\"></i>",
+  "category": "Wind Analysis",
+  "technologies": ["Python", "Pyodide", "Pandas", "NumPy"]
+}
