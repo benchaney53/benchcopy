@@ -1028,7 +1028,7 @@
 import json
 alarm_bytes = alarm_file_bytes.to_py() if alarm_file_bytes is not None else None
 alarm_name = alarm_file_name if alarm_file_name is not None else None
-run_browser_analysis(input_file_bytes.to_py(), input_file_name, params.to_py(), alarm_bytes, alarm_name)
+run_browser_analysis(input_file_bytes.to_py(), input_file_name, params, alarm_bytes, alarm_name)
                 `);
                 
                 const resultObj = JSON.parse(result);
