@@ -520,11 +520,18 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
     
     t0 = time.time()
     
+    def log(msg):
+        """Print log message for browser console"""
+        print(f"[Python] {msg}")
+    
     try:
+        log(f"Starting analysis of {file_name} ({len(file_bytes)} bytes)")
+        
         # Read SCADA file
         file_ext = file_name.lower().split('.')[-1]
         file_buffer = io.BytesIO(bytes(file_bytes))
         
+        log(f"Reading {file_ext} file...")
         if file_ext in ['xlsx', 'xlsm', 'xltx', 'xltm']:
             raw_df = pd.read_excel(file_buffer, engine='openpyxl')
         elif file_ext == 'xls':
@@ -536,26 +543,38 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         else:
             return json.dumps({'success': False, 'error': f'Unsupported file type: {file_ext}'})
         
+        log(f"File read: {len(raw_df)} rows, {len(raw_df.columns)} columns")
+        
         # Normalize headers
+        log("Normalizing headers...")
         df = normalize_headers(raw_df)
+        log(f"Headers normalized: {len(df.columns)} columns")
         
         # Detect timestamp
+        log("Detecting timestamp column...")
         ts_col = detect_timestamp_column(df)
+        log(f"Timestamp column: {ts_col}")
         df[ts_col] = pd.to_datetime(df[ts_col], errors='coerce')
         df = df.dropna(subset=[ts_col]).sort_values(ts_col).reset_index(drop=True)
+        log(f"Data after timestamp cleanup: {len(df)} rows")
         
         # Parse separators and detect WTGs
+        log("Detecting WTGs...")
         seps = _parse_separators(params.get('wtg_separators', '_, -, space'))
         wtgs = extract_wtgs_flexible(df.columns.tolist(), seps)
+        log(f"Found {len(wtgs)} WTGs: {wtgs[:5]}{'...' if len(wtgs) > 5 else ''}")
         
         if not wtgs:
             return json.dumps({'success': False, 'error': 'No WTGs detected. Check column naming.'})
         
         # Infer bin size
+        log("Inferring bin size...")
         inferred_bin = int(round(infer_bin_minutes(df[ts_col])))
         bin_minutes = float(params.get('bin_minutes') or inferred_bin)
+        log(f"Bin size: {bin_minutes} minutes (inferred: {inferred_bin})")
         
         # Parse category lists
+        log("Parsing category lists...")
         allowed_categories = [x.strip() for x in params.get('allowed_categories', 'Normal operation').split(',') if x.strip()]
         disallowed_categories = [x.strip() for x in params.get('disallowed_categories', 'Manufacturer,Unscheduled maintenance').split(',') if x.strip()]
         active_base_categories = [x.strip() for x in params.get('active_base_categories', 'Normal operation').split(',') if x.strip()]
@@ -574,9 +593,11 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             min_availability_pct = float(params.get('min_availability_pct', 96))
         
         # Load alarm file if provided
+        log("Checking for alarm file...")
         alarm_df = None
         alarm_cols = (None, None, None, None)
         if alarm_file_bytes and alarm_file_name:
+            log(f"Loading alarm file: {alarm_file_name} ({len(alarm_file_bytes)} bytes)")
             alarm_ext = alarm_file_name.lower().split('.')[-1]
             alarm_buffer = io.BytesIO(bytes(alarm_file_bytes))
             
@@ -611,10 +632,12 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             min_severity = int(min_severity)
         
         # Process each WTG
+        log(f"Processing {len(wtgs)} WTGs...")
         summaries = []
         data_sheets = {}
         
-        for wtg in wtgs:
+        for i, wtg in enumerate(wtgs):
+            log(f"Processing WTG {i+1}/{len(wtgs)}: {wtg}")
             # Slice dataframe for this WTG
             prefix = wtg + '_'
             keep_cols = [c for c in df.columns if c == ts_col or c.startswith(prefix)]
@@ -665,6 +688,7 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                         alarm_sheets[f'{wtg}_Alarms'] = filtered
         
         # Write output Excel
+        log(f"Writing Excel output with {len(summaries)} summaries...")
         output_buffer = io.BytesIO()
         with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
             if summaries:
