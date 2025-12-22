@@ -5,513 +5,190 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Run Test Tool | Bench Tools</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../../assets/sidebar.css">
     <style>
         :root {
-            --bg-primary: #0a0f1a;
-            --bg-secondary: #111827;
-            --bg-card: #1a2332;
-            --bg-input: #0d1320;
-            --accent-cyan: #06b6d4;
-            --accent-emerald: #10b981;
-            --accent-amber: #f59e0b;
-            --accent-rose: #f43f5e;
-            --text-primary: #f1f5f9;
-            --text-secondary: #94a3b8;
-            --text-muted: #64748b;
-            --border-color: #1e293b;
-            --border-accent: #334155;
-            --shadow-glow: 0 0 40px rgba(6, 182, 212, 0.15);
+            --card-bg: #3a3a3a;
+            --text-color: #e0e0e0;
+            --border-color: #555;
+            --accent-color: #88b0ff;
+            --success-color: #5a9068;
+            --error-color: #dc3545;
+            --warning-color: #f59e0b;
+        }
+        body.light-mode {
+            --card-bg: white;
+            --text-color: #333;
+            --border-color: #ddd;
+            --accent-color: #007bff;
+            --success-color: #1e7e34;
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { box-sizing: border-box; }
 
         body {
-            font-family: 'Outfit', sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            min-height: 100vh;
-            line-height: 1.6;
-        }
-
-        /* Ambient background effect */
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: 
-                radial-gradient(ellipse at 20% 20%, rgba(6, 182, 212, 0.08) 0%, transparent 50%),
-                radial-gradient(ellipse at 80% 80%, rgba(16, 185, 129, 0.06) 0%, transparent 50%);
-            pointer-events: none;
-            z-index: -1;
-        }
-
-        .container {
-            max-width: 1200px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 1400px;
             margin: 0 auto;
-            padding: 2rem;
+            padding: 24px 28px;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            min-height: 100vh;
+            transition: background 0.3s ease;
+            color: var(--text-color);
+        }
+        body.light-mode {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
         }
 
-        /* Header */
-        header {
-            text-align: center;
-            margin-bottom: 3rem;
-            padding-top: 1rem;
-        }
-
-        h1 {
-            font-size: 2.5rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-emerald));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 0.5rem;
-        }
-
-        .subtitle {
-            color: var(--text-secondary);
-            font-size: 1.1rem;
-            font-weight: 300;
-        }
-
-        /* Main layout */
-        .main-grid {
-            display: grid;
-            grid-template-columns: 1fr 380px;
-            gap: 2rem;
-        }
-
-        @media (max-width: 1024px) {
-            .main-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        /* Cards */
-        .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .card-header {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            margin-bottom: 1.25rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .card-icon {
-            width: 36px;
-            height: 36px;
-            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-emerald));
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.1rem;
-        }
-
-        .card-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-        }
-
-        /* Upload zone */
-        .upload-zone {
-            border: 2px dashed var(--border-accent);
-            border-radius: 12px;
-            padding: 2.5rem;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            background: var(--bg-input);
-        }
-
-        .upload-zone:hover, .upload-zone.drag-over {
-            border-color: var(--accent-cyan);
-            background: rgba(6, 182, 212, 0.05);
-        }
-
-        .upload-zone.has-file {
-            border-color: var(--accent-emerald);
-            border-style: solid;
-        }
-
-        .upload-icon {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-            opacity: 0.7;
-        }
-
-        .upload-text {
-            color: var(--text-secondary);
-            margin-bottom: 0.5rem;
-        }
-
-        .upload-hint {
-            font-size: 0.85rem;
-            color: var(--text-muted);
-        }
-
-        .file-name {
-            color: var(--accent-emerald);
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.9rem;
-            margin-top: 0.75rem;
-            word-break: break-all;
-        }
-
-        #file-input {
-            display: none;
-        }
-
-        /* Form inputs */
-        .form-group {
-            margin-bottom: 1.25rem;
-        }
-
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-        }
-
-        label {
-            display: block;
-            font-size: 0.85rem;
-            font-weight: 500;
-            color: var(--text-secondary);
-            margin-bottom: 0.5rem;
-        }
-
-        input[type="number"],
-        input[type="text"],
-        select {
-            width: 100%;
-            padding: 0.75rem 1rem;
-            background: var(--bg-input);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.9rem;
-            transition: border-color 0.2s;
-        }
-
-        input:focus, select:focus {
-            outline: none;
-            border-color: var(--accent-cyan);
-        }
-
-        /* Buttons */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-            padding: 0.875rem 1.5rem;
-            border: none;
-            border-radius: 10px;
-            font-family: 'Outfit', sans-serif;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .btn-primary {
-            width: 100%;
-            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-emerald));
-            color: var(--bg-primary);
-            box-shadow: 0 4px 20px rgba(6, 182, 212, 0.3);
-        }
-
-        .btn-primary:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 30px rgba(6, 182, 212, 0.4);
-        }
-
-        .btn-primary:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .btn-secondary {
-            background: var(--bg-secondary);
-            color: var(--text-primary);
-            border: 1px solid var(--border-accent);
-        }
-
-        .btn-secondary:hover {
-            background: var(--border-color);
-        }
-
-        /* Status and progress */
-        .status-container {
-            margin-top: 1.5rem;
-        }
-
-        .status-bar {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 1rem;
-            background: var(--bg-input);
-            border-radius: 10px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
-        }
-
-        .status-indicator {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: var(--text-muted);
-        }
-
-        .status-indicator.loading {
-            background: var(--accent-amber);
-            animation: pulse 1.5s infinite;
-        }
-
-        .status-indicator.success {
-            background: var(--accent-emerald);
-        }
-
-        .status-indicator.error {
-            background: var(--accent-rose);
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
-
-        .progress-bar {
-            width: 100%;
-            height: 4px;
-            background: var(--border-color);
-            border-radius: 2px;
-            margin-top: 0.75rem;
-            overflow: hidden;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-emerald));
-            border-radius: 2px;
-            transition: width 0.3s ease;
-        }
-
-        /* Console output */
-        .console {
-            background: var(--bg-input);
-            border: 1px solid var(--border-color);
-            border-radius: 10px;
-            padding: 1rem;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
-            max-height: 300px;
-            overflow-y: auto;
-            color: var(--text-secondary);
-        }
-
-        .console-line {
-            margin-bottom: 0.25rem;
-        }
-
-        .console-line.info {
-            color: var(--accent-cyan);
-        }
-
-        .console-line.success {
-            color: var(--accent-emerald);
-        }
-
-        .console-line.error {
-            color: var(--accent-rose);
-        }
-
-        .console-line.warning {
-            color: var(--accent-amber);
-        }
-
-        /* Results section */
-        .results-card {
-            display: none;
-        }
-
-        .results-card.visible {
-            display: block;
-        }
-
-        .result-stat {
-            display: flex;
-            justify-content: space-between;
-            padding: 0.75rem 0;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .result-stat:last-child {
-            border-bottom: none;
-        }
-
-        .stat-label {
-            color: var(--text-secondary);
-        }
-
-        .stat-value {
-            font-family: 'JetBrains Mono', monospace;
-            font-weight: 600;
-            color: var(--accent-emerald);
-        }
-
-        /* Download button */
-        .download-section {
-            margin-top: 1.5rem;
-            padding-top: 1.5rem;
-            border-top: 1px solid var(--border-color);
-        }
-
-        /* Accordion for advanced settings */
-        .accordion {
-            border: 1px solid var(--border-color);
-            border-radius: 10px;
-            overflow: hidden;
-            margin-bottom: 1rem;
-        }
-
-        .accordion-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 1rem;
-            background: var(--bg-input);
-            cursor: pointer;
-            user-select: none;
-        }
-
-        .accordion-header:hover {
-            background: var(--border-color);
-        }
-
-        .accordion-title {
-            font-size: 0.9rem;
-            font-weight: 500;
-        }
-
-        .accordion-icon {
-            transition: transform 0.3s;
-        }
-
-        .accordion.open .accordion-icon {
-            transform: rotate(180deg);
-        }
-
-        .accordion-content {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease;
-        }
-
-        .accordion.open .accordion-content {
-            max-height: 1000px;
-        }
-
-        .accordion-body {
-            padding: 1rem;
-        }
-
-        /* Loading overlay */
-        .loading-overlay {
+        .theme-toggle {
             position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(10, 15, 26, 0.9);
-            display: none;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50px;
+            padding: 10px 20px;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+            display: flex;
             align-items: center;
-            justify-content: center;
+            gap: 10px;
+            transition: all 0.3s ease;
             z-index: 1000;
         }
+        .theme-toggle:hover { background: rgba(255, 255, 255, 0.3); transform: scale(1.05); }
+        body.light-mode .theme-toggle { background: rgba(0, 0, 0, 0.1); border: 2px solid rgba(0, 0, 0, 0.2); }
+        body.light-mode .theme-toggle:hover { background: rgba(0, 0, 0, 0.15); }
+        .theme-toggle-icon { width: 20px; height: 20px; stroke: white; }
+        body.light-mode .theme-toggle-icon { stroke: #2c3e50; }
+        .theme-toggle-text { color: white; font-size: 14px; font-weight: 500; }
+        body.light-mode .theme-toggle-text { color: #2c3e50; }
 
-        .loading-overlay.visible {
-            display: flex;
-        }
+        .back-link { display: inline-block; margin-bottom: 20px; color: #88b0ff; text-decoration: none; font-size: 14px; }
+        body.light-mode .back-link { color: #007bff; }
+        .back-link:hover { text-decoration: underline; }
 
-        .loading-content {
-            text-align: center;
-        }
+        h1 { color: #f0f0f0; text-align: center; margin-bottom: 5px; margin-top: 10px; }
+        body.light-mode h1 { color: #333; }
+        .subtitle { text-align: center; color: #b0b0b0; margin-bottom: 20px; margin-top: 5px; }
+        body.light-mode .subtitle { color: #666; }
 
-        .spinner {
-            width: 60px;
-            height: 60px;
-            border: 3px solid var(--border-color);
-            border-top-color: var(--accent-cyan);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 1.5rem;
-        }
+        /* Upload cards row */
+        .upload-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+        @media (max-width: 768px) { .upload-row { grid-template-columns: 1fr; } }
 
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .loading-text {
-            font-size: 1.1rem;
-            color: var(--text-secondary);
-        }
-
-        /* Info tooltip */
-        .info-tip {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 16px;
-            height: 16px;
-            background: var(--border-accent);
-            border-radius: 50%;
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            cursor: help;
-            margin-left: 0.25rem;
-        }
-
-        /* Back link */
-        .back-link {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            color: var(--text-secondary);
-            text-decoration: none;
-            font-size: 0.9rem;
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 1.5rem;
             margin-bottom: 1.5rem;
-            transition: color 0.2s;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            transition: background 0.3s ease;
         }
+        body.light-mode .card { box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
 
-        .back-link:hover {
-            color: var(--accent-cyan);
+        .card-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color); }
+        .card-icon { width: 36px; height: 36px; background: #6a6a6a; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; color: white; }
+        body.light-mode .card-icon { background: #0056b3; }
+        .card-title { font-size: 1.1rem; font-weight: 600; }
+
+        .upload-zone { border: 2px dashed #666; border-radius: 8px; padding: 2.5rem; text-align: center; cursor: pointer; transition: all 0.3s ease; background: #2a2a2a; color: #b0b0b0; }
+        body.light-mode .upload-zone { border-color: #ccc; background: #f8f9fa; color: #666; }
+        .upload-zone:hover, .upload-zone.drag-over { border-color: var(--accent-color); background: rgba(136, 176, 255, 0.1); }
+        body.light-mode .upload-zone:hover, body.light-mode .upload-zone.drag-over { border-color: #007bff; background: #f0f7ff; }
+        .upload-zone.has-file { border-color: var(--success-color); border-style: solid; }
+        .upload-icon { font-size: 3rem; margin-bottom: 1rem; opacity: 0.7; }
+        .upload-text { margin-bottom: 0.5rem; }
+        .upload-hint { font-size: 0.85rem; color: #888; }
+        .file-name { color: var(--success-color); font-family: monospace; font-size: 0.9rem; margin-top: 0.75rem; word-break: break-all; }
+        #file-input, #alarm-file-input { display: none; }
+
+        .form-group { margin-bottom: 1.25rem; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        label { display: block; font-size: 0.85rem; font-weight: 500; color: var(--text-color); margin-bottom: 0.5rem; }
+        input[type="number"], input[type="text"], select {
+            width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); font-family: inherit; font-size: 14px; transition: border-color 0.2s;
         }
+        body.light-mode input[type="number"], body.light-mode input[type="text"], body.light-mode select { background: white; }
+        input:focus, select:focus { outline: none; border-color: var(--accent-color); box-shadow: 0 0 0 3px rgba(136, 176, 255, 0.2); }
+        body.light-mode input:focus, body.light-mode select:focus { box-shadow: 0 0 0 3px rgba(0,123,255,0.1); }
+
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+            padding: 14px 28px; border: none; border-radius: 6px; font-size: 17px; font-weight: 600;
+            cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        body.light-mode .btn { box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15); }
+        .btn-primary { width: 100%; background-color: #6a6a6a; color: white; }
+        body.light-mode .btn-primary { background-color: #0056b3; }
+        .btn-primary:hover:not(:disabled) { background-color: #7a7a7a; transform: translateY(-2px); box-shadow: 0 6px 8px rgba(0, 0, 0, 0.4); }
+        body.light-mode .btn-primary:hover:not(:disabled) { background-color: #004085; box-shadow: 0 6px 8px rgba(0, 0, 0, 0.2); }
+        .btn-primary:disabled { background-color: #444; opacity: 0.5; cursor: not-allowed; transform: none; }
+        body.light-mode .btn-primary:disabled { background-color: #ccc; opacity: 1; }
+
+        .status-container { margin-top: 1.5rem; }
+        .status-bar { display: flex; align-items: center; gap: 0.75rem; padding: 1rem; background: #2a2a2a; border-radius: 6px; font-family: monospace; font-size: 0.85rem; }
+        body.light-mode .status-bar { background: #f8f9fa; }
+        .status-indicator { width: 10px; height: 10px; border-radius: 50%; background: #888; }
+        .status-indicator.loading { background: var(--warning-color); animation: pulse 1.5s infinite; }
+        .status-indicator.success { background: var(--success-color); }
+        .status-indicator.error { background: var(--error-color); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .progress-bar { width: 100%; height: 4px; background: var(--border-color); border-radius: 2px; margin-top: 0.75rem; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--accent-color); border-radius: 2px; transition: width 0.3s ease; }
+
+        .console { background: #2a2a2a; border: 1px solid var(--border-color); border-radius: 6px; padding: 1rem; font-family: monospace; font-size: 0.8rem; max-height: 300px; overflow-y: auto; color: #b0b0b0; }
+        body.light-mode .console { background: #f8f9fa; color: #666; }
+        .console-line { margin-bottom: 0.25rem; }
+        .console-line.info { color: var(--accent-color); }
+        .console-line.success { color: var(--success-color); }
+        .console-line.error { color: var(--error-color); }
+        .console-line.warning { color: var(--warning-color); }
+
+        .results-card { display: none; }
+        .results-card.visible { display: block; }
+        .result-stat { display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--border-color); }
+        .result-stat:last-child { border-bottom: none; }
+        .stat-label { color: var(--text-color); }
+        .stat-value { font-family: monospace; font-weight: 600; color: var(--success-color); }
+        .download-section { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color); }
+
+        .accordion { border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; margin-bottom: 1rem; }
+        .accordion-header { display: flex; align-items: center; justify-content: space-between; padding: 1rem; background: #2a2a2a; cursor: pointer; user-select: none; }
+        body.light-mode .accordion-header { background: #f8f9fa; }
+        .accordion-header:hover { background: #3a3a3a; }
+        body.light-mode .accordion-header:hover { background: #e9ecef; }
+        .accordion-title { font-size: 0.9rem; font-weight: 500; }
+        .accordion-icon { transition: transform 0.3s; }
+        .accordion.open .accordion-icon { transform: rotate(180deg); }
+        .accordion-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+        .accordion.open .accordion-content { max-height: 1000px; }
+        .accordion-body { padding: 1rem; }
+
+        .loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(26, 26, 26, 0.9); display: none; align-items: center; justify-content: center; z-index: 1000; }
+        body.light-mode .loading-overlay { background: rgba(245, 247, 250, 0.9); }
+        .loading-overlay.visible { display: flex; }
+        .loading-content { text-align: center; }
+        .spinner { width: 60px; height: 60px; border: 4px solid #2a2a2a; border-top: 4px solid #888; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1.5rem; }
+        body.light-mode .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #007bff; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { font-size: 1.1rem; color: #b0b0b0; }
+        body.light-mode .loading-text { color: #666; }
+
+        .info-tip { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; background: #555; border-radius: 50%; font-size: 0.7rem; color: #b0b0b0; cursor: help; margin-left: 0.25rem; }
+        body.light-mode .info-tip { background: #ccc; color: #666; }
     </style>
 </head>
 <body>
+    <button class="theme-toggle" onclick="toggleTheme()">
+        <svg class="theme-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/>
+            <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+        </svg>
+        <span class="theme-toggle-text">Theme</span>
+    </button>
+
     <div class="loading-overlay" id="pyodide-loading">
         <div class="loading-content">
             <div class="spinner"></div>
@@ -519,242 +196,232 @@
         </div>
     </div>
 
-    <div class="container">
-        <a href="../../index.html" class="back-link"><i class="fa-solid fa-arrow-left"></i> Back to Tools</a>
-        
-        <header>
-            <h1>Run Test Tool</h1>
-            <p class="subtitle">Find optimal reliability and HOTS test windows from SCADA data</p>
-        </header>
+    <a href="../../index.html" class="back-link"><i class="fa-solid fa-arrow-left"></i> Back to Tools</a>
+    
+    <h1>Run Test Tool</h1>
+    <p class="subtitle">Find optimal reliability and HOTS test windows from SCADA data</p>
 
-        <div class="main-grid">
-            <div class="main-column">
-                <!-- File Upload -->
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-icon"><i class="fa-solid fa-folder-open"></i></div>
-                        <span class="card-title">SCADA Data Input</span>
-                    </div>
-                    <div class="upload-zone" id="upload-zone">
-                        <div class="upload-icon"><i class="fa-solid fa-file-arrow-up"></i></div>
-                        <div class="upload-text">Drop your SCADA file here or click to browse</div>
-                        <div class="upload-hint">Supports .xlsx, .xls, .csv, .tsv</div>
-                        <div class="file-name" id="file-name"></div>
-                    </div>
-                    <input type="file" id="file-input" accept=".xlsx,.xls,.csv,.tsv">
-                </div>
-
-                <!-- Alarm File Upload (Optional) -->
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-icon"><i class="fa-solid fa-bell"></i></div>
-                        <span class="card-title">Alarm Log (Optional)</span>
-                    </div>
-                    <div class="upload-zone" id="alarm-upload-zone">
-                        <div class="upload-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
-                        <div class="upload-text">Drop your Alarm Log file here or click to browse</div>
-                        <div class="upload-hint">Optional - filters alarms for each test window</div>
-                        <div class="file-name" id="alarm-file-name"></div>
-                    </div>
-                    <input type="file" id="alarm-file-input" accept=".xlsx,.xls,.csv,.tsv">
-                    
-                    <!-- Alarm Settings Accordion -->
-                    <div class="accordion" id="alarm-accordion" style="margin-top: 1rem;">
-                        <div class="accordion-header" onclick="toggleAccordion('alarm-accordion')">
-                            <span class="accordion-title">Alarm Settings</span>
-                            <span class="accordion-icon"><i class="fa-solid fa-chevron-down"></i></span>
-                        </div>
-                        <div class="accordion-content">
-                            <div class="accordion-body">
-                                <div class="form-group">
-                                    <label>Keep Event Types <span class="info-tip" title="Comma-separated event types to include">?</span></label>
-                                    <input type="text" id="alarms-keep-event-types" value="Alarm,Warning">
-                                </div>
-                                <div class="form-group">
-                                    <label>Min Severity <span class="info-tip" title="Leave empty for no filter">?</span></label>
-                                    <input type="number" id="alarms-min-severity" placeholder="No filter" min="0">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Core Settings -->
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-icon"><i class="fa-solid fa-sliders"></i></div>
-                        <span class="card-title">Test Parameters</span>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Mode</label>
-                            <select id="mode">
-                                <option value="m01">M01 (72h active)</option>
-                                <option value="reliability">Reliability (informational)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Rated Power (kW)</label>
-                            <input type="number" id="rated-power" value="4500" min="100" step="100">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Test Hours</label>
-                            <input type="number" id="test-hours" value="72" min="1">
-                        </div>
-                        <div class="form-group">
-                            <label>Extension Hours</label>
-                            <input type="number" id="extension-hours" value="24" min="0">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Min Availability %</label>
-                            <input type="number" id="min-availability" value="96" min="0" max="100" step="0.1">
-                        </div>
-                        <div class="form-group">
-                            <label>Nominal Threshold %</label>
-                            <input type="number" id="nominal-threshold" value="99" min="0" max="100" step="1">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Energy Source</label>
-                            <select id="energy-source">
-                                <option value="power">Power Average</option>
-                                <option value="total_active">Total Active Power</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Enforce Allowed Window</label>
-                            <select id="enforce-allowed-window">
-                                <option value="yes">Yes</option>
-                                <option value="no">No</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- Advanced Settings Accordion -->
-                    <div class="accordion" id="advanced-accordion">
-                        <div class="accordion-header" onclick="toggleAccordion('advanced-accordion')">
-                            <span class="accordion-title">Advanced Settings</span>
-                            <span class="accordion-icon"><i class="fa-solid fa-chevron-down"></i></span>
-                        </div>
-                        <div class="accordion-content">
-                            <div class="accordion-body">
-                                <div class="form-group">
-                                    <label>Bin Size (minutes) <span class="info-tip" title="Auto-detected if left empty">?</span></label>
-                                    <input type="number" id="bin-minutes" placeholder="Auto-detect" min="1">
-                                </div>
-                                <div class="form-group">
-                                    <label>Allowed Categories</label>
-                                    <input type="text" id="allowed-categories" value="Normal operation">
-                                </div>
-                                <div class="form-group">
-                                    <label>Disallowed Categories</label>
-                                    <input type="text" id="disallowed-categories" value="Manufacturer,Unscheduled maintenance">
-                                </div>
-                                <div class="form-group">
-                                    <label>Active Base Categories</label>
-                                    <input type="text" id="active-base-categories" value="Normal operation">
-                                </div>
-                                <div class="form-group">
-                                    <label>Allowed Window Categories</label>
-                                    <input type="text" id="allowed-window-categories" value="Normal operation,Scheduled maintenance,Owner,Environmental,Utility">
-                                </div>
-                                <div class="form-group">
-                                    <label>Disqualifying Window Categories</label>
-                                    <input type="text" id="disqualifying-window-categories" value="Manufacturer,Unscheduled maintenance">
-                                </div>
-                                <div class="form-group">
-                                    <label>WTG Separators</label>
-                                    <input type="text" id="wtg-separators" value="_, -, space">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <button class="btn btn-primary" id="run-btn" disabled>
-                        <i class="fa-solid fa-play"></i> Run Analysis
-                    </button>
-
-                    <div class="status-container" id="status-container" style="display: none;">
-                        <div class="status-bar">
-                            <div class="status-indicator" id="status-indicator"></div>
-                            <span id="status-text">Ready</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Console Output -->
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-icon"><i class="fa-solid fa-terminal"></i></div>
-                        <span class="card-title">Console Output</span>
-                    </div>
-                    <div class="console" id="console">
-                        <div class="console-line info">Initializing Python runtime...</div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="sidebar">
-                <!-- Results Card -->
-                <div class="card results-card" id="results-card">
-                    <div class="card-header">
-                        <div class="card-icon"><i class="fa-solid fa-chart-line"></i></div>
-                        <span class="card-title">Results Summary</span>
-                    </div>
-                    <div id="results-content">
-                        <!-- Populated dynamically -->
-                    </div>
-                    <div class="download-section">
-                        <button class="btn btn-primary" id="download-btn" style="display: none;">
-                            <i class="fa-solid fa-download"></i> Download Excel Report
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Help Card -->
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-icon"><i class="fa-solid fa-circle-question"></i></div>
-                        <span class="card-title">Quick Help</span>
-                    </div>
-                    <div style="font-size: 0.9rem; color: var(--text-secondary);">
-                        <p style="margin-bottom: 1rem;"><strong>Required columns:</strong></p>
-                        <ul style="margin-left: 1.25rem; margin-bottom: 1rem;">
-                            <li>Timestamp (PCTimeStamp, etc.)</li>
-                            <li>Power per WTG</li>
-                            <li>Turbine State per WTG</li>
-                            <li>Report Category per WTG</li>
-                        </ul>
-                        <p style="margin-bottom: 0.5rem;"><strong>M01 Mode:</strong> Finds 72h active windows meeting availability and energy requirements.</p>
-                        <p><strong>Reliability Mode:</strong> Informational analysis without strict requirements.</p>
-                    </div>
-                </div>
+    <!-- Help (Collapsible) -->
+    <div class="accordion" id="help-accordion">
+        <div class="accordion-header" onclick="toggleAccordion('help-accordion')">
+            <span class="accordion-title"><i class="fa-solid fa-circle-question" style="margin-right: 0.5rem;"></i> Quick Help</span>
+            <span class="accordion-icon"><i class="fa-solid fa-chevron-down"></i></span>
+        </div>
+        <div class="accordion-content">
+            <div class="accordion-body" style="font-size: 0.9rem; color: var(--text-color);">
+                <p style="margin-bottom: 1rem;"><strong>Required columns:</strong></p>
+                <ul style="margin-left: 1.25rem; margin-bottom: 1rem;">
+                    <li>Timestamp (PCTimeStamp, etc.)</li>
+                    <li>Power per WTG</li>
+                    <li>Turbine State per WTG</li>
+                    <li>Report Category per WTG</li>
+                </ul>
+                <p style="margin-bottom: 0.5rem;"><strong>M01 Mode:</strong> Finds 72h active windows meeting availability and energy requirements.</p>
+                <p><strong>Reliability Mode:</strong> Informational analysis without strict requirements.</p>
             </div>
         </div>
     </div>
 
-    <!-- Sidebar Navigation -->
-    <script src="../../assets/sidebar.js"></script>
+    <!-- File Upload Cards Row -->
+    <div class="upload-row">
+        <div class="card" style="margin-bottom: 0;">
+            <div class="card-header">
+                <div class="card-icon"><i class="fa-solid fa-folder-open"></i></div>
+                <span class="card-title">SCADA Data Input</span>
+            </div>
+            <div class="upload-zone" id="upload-zone">
+                <div class="upload-icon"><i class="fa-solid fa-file-arrow-up"></i></div>
+                <div class="upload-text">Drop your SCADA file here or click to browse</div>
+                <div class="upload-hint">Supports .xlsx, .xls, .csv, .tsv</div>
+                <div class="file-name" id="file-name"></div>
+            </div>
+            <input type="file" id="file-input" accept=".xlsx,.xls,.csv,.tsv">
+        </div>
 
-    <!-- Pyodide -->
-    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
-    
+        <div class="card" style="margin-bottom: 0;">
+            <div class="card-header">
+                <div class="card-icon"><i class="fa-solid fa-bell"></i></div>
+                <span class="card-title">Alarm Log (Optional)</span>
+            </div>
+            <div class="upload-zone" id="alarm-upload-zone">
+                <div class="upload-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                <div class="upload-text">Drop your Alarm Log file here or click to browse</div>
+                <div class="upload-hint">Optional - filters alarms for each test window</div>
+                <div class="file-name" id="alarm-file-name"></div>
+            </div>
+            <input type="file" id="alarm-file-input" accept=".xlsx,.xls,.csv,.tsv">
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon"><i class="fa-solid fa-sliders"></i></div>
+            <span class="card-title">Test Parameters</span>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Mode</label>
+                <select id="mode">
+                    <option value="m01">M01 (72h active)</option>
+                    <option value="reliability">Reliability (informational)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Rated Power (kW)</label>
+                <input type="number" id="rated-power" value="4500" min="100" step="100">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Test Hours</label>
+                <input type="number" id="test-hours" value="72" min="1">
+            </div>
+            <div class="form-group">
+                <label>Extension Hours</label>
+                <input type="number" id="extension-hours" value="24" min="0">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Min Availability %</label>
+                <input type="number" id="min-availability" value="96" min="0" max="100" step="0.1">
+            </div>
+            <div class="form-group">
+                <label>Nominal Threshold %</label>
+                <input type="number" id="nominal-threshold" value="99" min="0" max="100" step="1">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Energy Source</label>
+                <select id="energy-source">
+                    <option value="power">Power Average</option>
+                    <option value="total_active">Total Active Power</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Enforce Allowed Window</label>
+                <select id="enforce-allowed-window">
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="accordion" id="advanced-accordion">
+            <div class="accordion-header" onclick="toggleAccordion('advanced-accordion')">
+                <span class="accordion-title">Advanced Settings</span>
+                <span class="accordion-icon"><i class="fa-solid fa-chevron-down"></i></span>
+            </div>
+            <div class="accordion-content">
+                <div class="accordion-body">
+                    <div class="form-group">
+                        <label>Bin Size (minutes) <span class="info-tip" title="Auto-detected if left empty">?</span></label>
+                        <input type="number" id="bin-minutes" placeholder="Auto-detect" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label>Allowed Categories</label>
+                        <input type="text" id="allowed-categories" value="Normal operation">
+                    </div>
+                    <div class="form-group">
+                        <label>Disallowed Categories</label>
+                        <input type="text" id="disallowed-categories" value="Manufacturer,Unscheduled maintenance">
+                    </div>
+                    <div class="form-group">
+                        <label>Active Base Categories</label>
+                        <input type="text" id="active-base-categories" value="Normal operation">
+                    </div>
+                    <div class="form-group">
+                        <label>Allowed Window Categories</label>
+                        <input type="text" id="allowed-window-categories" value="Normal operation,Scheduled maintenance,Owner,Environmental,Utility">
+                    </div>
+                    <div class="form-group">
+                        <label>Disqualifying Window Categories</label>
+                        <input type="text" id="disqualifying-window-categories" value="Manufacturer,Unscheduled maintenance">
+                    </div>
+                    <div class="form-group">
+                        <label>WTG Separators</label>
+                        <input type="text" id="wtg-separators" value="_, -, space">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="accordion" id="alarm-accordion">
+            <div class="accordion-header" onclick="toggleAccordion('alarm-accordion')">
+                <span class="accordion-title">Alarm Settings</span>
+                <span class="accordion-icon"><i class="fa-solid fa-chevron-down"></i></span>
+            </div>
+            <div class="accordion-content">
+                <div class="accordion-body">
+                    <div class="form-group">
+                        <label>Keep Event Types <span class="info-tip" title="Comma-separated event types to include">?</span></label>
+                        <input type="text" id="alarms-keep-event-types" value="Alarm,Warning">
+                    </div>
+                    <div class="form-group">
+                        <label>Min Severity <span class="info-tip" title="Leave empty for no filter">?</span></label>
+                        <input type="number" id="alarms-min-severity" placeholder="No filter" min="0">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <button class="btn btn-primary" id="run-btn" disabled>
+            <i class="fa-solid fa-play"></i> Run Analysis
+        </button>
+
+        <div class="status-container" id="status-container" style="display: none;">
+            <div class="status-bar">
+                <div class="status-indicator" id="status-indicator"></div>
+                <span id="status-text">Ready</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon"><i class="fa-solid fa-terminal"></i></div>
+            <span class="card-title">Console Output</span>
+        </div>
+        <div class="console" id="console">
+            <div class="console-line info">Initializing Python runtime...</div>
+        </div>
+    </div>
+
+    <div class="card results-card" id="results-card">
+        <div class="card-header">
+            <div class="card-icon"><i class="fa-solid fa-chart-line"></i></div>
+            <span class="card-title">Results Summary</span>
+        </div>
+        <div id="results-content"></div>
+        <div class="download-section">
+            <button class="btn btn-primary" id="download-btn" style="display: none;">
+                <i class="fa-solid fa-download"></i> Download Excel Report
+            </button>
+        </div>
+    </div>
+
+    <script src="../../assets/sidebar.js"></script>
     <script>
-        // Global state
+        function toggleTheme() {
+            document.body.classList.toggle('light-mode');
+            localStorage.setItem('theme', document.body.classList.contains('light-mode') ? 'light' : 'dark');
+        }
+        if (localStorage.getItem('theme') === 'light') {
+            document.body.classList.add('light-mode');
+        }
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
+    <script>
         let pyodide = null;
         let uploadedFile = null;
         let alarmFile = null;
         let outputBlob = null;
 
-        // DOM Elements
         const uploadZone = document.getElementById('upload-zone');
         const fileInput = document.getElementById('file-input');
         const fileNameDisplay = document.getElementById('file-name');
@@ -772,7 +439,6 @@
         const downloadBtn = document.getElementById('download-btn');
         const loadingOverlay = document.getElementById('pyodide-loading');
 
-        // Console logging
         function log(message, type = '') {
             const line = document.createElement('div');
             line.className = `console-line ${type}`;
@@ -781,143 +447,70 @@
             consoleEl.scrollTop = consoleEl.scrollHeight;
         }
 
-        function clearConsole() {
-            consoleEl.innerHTML = '';
-        }
+        function clearConsole() { consoleEl.innerHTML = ''; }
 
-        // Status updates
         function setStatus(text, state = '', progress = null) {
             statusContainer.style.display = 'block';
             statusText.textContent = text;
             statusIndicator.className = `status-indicator ${state}`;
-            if (progress !== null) {
-                progressFill.style.width = `${progress}%`;
-            }
+            if (progress !== null) { progressFill.style.width = `${progress}%`; }
         }
 
-        // Accordion toggle
-        function toggleAccordion(id) {
-            document.getElementById(id).classList.toggle('open');
-        }
+        function toggleAccordion(id) { document.getElementById(id).classList.toggle('open'); }
 
-        // SCADA File upload handling
         uploadZone.addEventListener('click', () => fileInput.click());
-        
-        uploadZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadZone.classList.add('drag-over');
-        });
-
-        uploadZone.addEventListener('dragleave', () => {
-            uploadZone.classList.remove('drag-over');
-        });
-
-        uploadZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadZone.classList.remove('drag-over');
-            if (e.dataTransfer.files.length) {
-                handleFile(e.dataTransfer.files[0]);
-            }
-        });
-
-        fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length) {
-                handleFile(e.target.files[0]);
-            }
-        });
+        uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+        uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+        uploadZone.addEventListener('drop', (e) => { e.preventDefault(); uploadZone.classList.remove('drag-over'); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
+        fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
 
         function handleFile(file) {
             const validTypes = ['.xlsx', '.xls', '.csv', '.tsv'];
             const ext = '.' + file.name.split('.').pop().toLowerCase();
-            
-            if (!validTypes.includes(ext)) {
-                log(`Invalid file type: ${ext}. Please use xlsx, xls, csv, or tsv.`, 'error');
-                return;
-            }
-
+            if (!validTypes.includes(ext)) { log(`Invalid file type: ${ext}. Please use xlsx, xls, csv, or tsv.`, 'error'); return; }
             uploadedFile = file;
             fileNameDisplay.textContent = file.name;
             uploadZone.classList.add('has-file');
             log(`SCADA file loaded: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`, 'success');
-            
-            if (pyodide) {
-                runBtn.disabled = false;
-            }
+            if (pyodide) { runBtn.disabled = false; }
         }
 
-        // Alarm File upload handling
         alarmUploadZone.addEventListener('click', () => alarmFileInput.click());
-        
-        alarmUploadZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            alarmUploadZone.classList.add('drag-over');
-        });
-
-        alarmUploadZone.addEventListener('dragleave', () => {
-            alarmUploadZone.classList.remove('drag-over');
-        });
-
-        alarmUploadZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            alarmUploadZone.classList.remove('drag-over');
-            if (e.dataTransfer.files.length) {
-                handleAlarmFile(e.dataTransfer.files[0]);
-            }
-        });
-
-        alarmFileInput.addEventListener('change', (e) => {
-            if (e.target.files.length) {
-                handleAlarmFile(e.target.files[0]);
-            }
-        });
+        alarmUploadZone.addEventListener('dragover', (e) => { e.preventDefault(); alarmUploadZone.classList.add('drag-over'); });
+        alarmUploadZone.addEventListener('dragleave', () => alarmUploadZone.classList.remove('drag-over'));
+        alarmUploadZone.addEventListener('drop', (e) => { e.preventDefault(); alarmUploadZone.classList.remove('drag-over'); if (e.dataTransfer.files.length) handleAlarmFile(e.dataTransfer.files[0]); });
+        alarmFileInput.addEventListener('change', (e) => { if (e.target.files.length) handleAlarmFile(e.target.files[0]); });
 
         function handleAlarmFile(file) {
             const validTypes = ['.xlsx', '.xls', '.csv', '.tsv'];
             const ext = '.' + file.name.split('.').pop().toLowerCase();
-            
-            if (!validTypes.includes(ext)) {
-                log(`Invalid alarm file type: ${ext}. Please use xlsx, xls, csv, or tsv.`, 'error');
-                return;
-            }
-
+            if (!validTypes.includes(ext)) { log(`Invalid alarm file type: ${ext}. Please use xlsx, xls, csv, or tsv.`, 'error'); return; }
             alarmFile = file;
             alarmFileNameDisplay.textContent = file.name;
             alarmUploadZone.classList.add('has-file');
             log(`Alarm file loaded: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`, 'success');
         }
 
-        // Initialize Pyodide
         async function initPyodide() {
             loadingOverlay.classList.add('visible');
             log('Loading Pyodide runtime...', 'info');
-            
             try {
                 pyodide = await loadPyodide();
                 log('Pyodide loaded. Installing packages...', 'info');
-                
-                // Load built-in packages first
                 await pyodide.loadPackage(['pandas', 'numpy', 'micropip']);
                 log('Core packages installed: pandas, numpy', 'success');
-                
-                // Install openpyxl via micropip (not a built-in Pyodide package)
                 log('Installing openpyxl via micropip...', 'info');
                 await pyodide.runPythonAsync(`
                     import micropip
                     await micropip.install('openpyxl')
                 `);
                 log('Packages installed: pandas, numpy, openpyxl', 'success');
-                
-                // Load the reliability test Python code
                 await loadReliabilityScript();
-                
                 loadingOverlay.classList.remove('visible');
                 log('Python runtime ready!', 'success');
-                
-                if (uploadedFile) {
-                    runBtn.disabled = false;
-                }
+                if (uploadedFile) { runBtn.disabled = false; }
             } catch (error) {
-                loadingOverlay.classList.remove('visible')
+                loadingOverlay.classList.remove('visible');
                 log(`Failed to initialize Pyodide: ${error.message}`, 'error');
             }
         }
@@ -925,32 +518,16 @@
         async function loadReliabilityScript() {
             try {
                 const response = await fetch('reliability_test.py');
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch script: ${response.status} ${response.statusText}`);
-                }
+                if (!response.ok) { throw new Error(`Failed to fetch script: ${response.status} ${response.statusText}`); }
                 const code = await response.text();
                 log('Loading Python script (' + code.length + ' chars)...', 'info');
-                
-                try {
-                    await pyodide.runPythonAsync(code);
-                } catch (pythonError) {
-                    log(`Python execution error: ${pythonError.message}`, 'error');
-                    console.error('Python error details:', pythonError);
-                    return;
-                }
-                
-                // Verify the function is defined
-                const check = await pyodide.runPythonAsync(`
-'run_browser_analysis' in dir()
-                `);
-                if (check) {
-                    log('Reliability test module loaded', 'success');
-                } else {
+                try { await pyodide.runPythonAsync(code); }
+                catch (pythonError) { log(`Python execution error: ${pythonError.message}`, 'error'); console.error('Python error details:', pythonError); return; }
+                const check = await pyodide.runPythonAsync(`'run_browser_analysis' in dir()`);
+                if (check) { log('Reliability test module loaded', 'success'); }
+                else {
                     log('Warning: run_browser_analysis not found in module', 'warning');
-                    // List what IS defined
-                    const funcs = await pyodide.runPythonAsync(`
-[x for x in dir() if not x.startswith('_')]
-                    `);
+                    const funcs = await pyodide.runPythonAsync(`[x for x in dir() if not x.startswith('_')]`);
                     log('Defined names: ' + funcs.toJs().join(', '), 'info');
                 }
             } catch (error) {
@@ -959,44 +536,30 @@
             }
         }
 
-        // Run analysis
         runBtn.addEventListener('click', runAnalysis);
 
         async function runAnalysis() {
             if (!pyodide || !uploadedFile) return;
-
-            // Don't clear console so we can see loading errors
-            // clearConsole();
             log('Starting analysis...', 'info');
             setStatus('Reading file...', 'loading', 10);
             runBtn.disabled = true;
             resultsCard.classList.remove('visible');
             downloadBtn.style.display = 'none';
-
             try {
-                // Read SCADA file as bytes
                 const arrayBuffer = await uploadedFile.arrayBuffer();
                 const uint8Array = new Uint8Array(arrayBuffer);
-                
-                // Pass SCADA file to Python
                 pyodide.globals.set('input_file_bytes', uint8Array);
                 pyodide.globals.set('input_file_name', uploadedFile.name);
-                
-                // Read alarm file if provided
-                let hasAlarmFile = false;
                 if (alarmFile) {
                     const alarmArrayBuffer = await alarmFile.arrayBuffer();
                     const alarmUint8Array = new Uint8Array(alarmArrayBuffer);
                     pyodide.globals.set('alarm_file_bytes', alarmUint8Array);
                     pyodide.globals.set('alarm_file_name', alarmFile.name);
-                    hasAlarmFile = true;
                     log(`Alarm file included: ${alarmFile.name}`, 'info');
                 } else {
                     pyodide.globals.set('alarm_file_bytes', null);
                     pyodide.globals.set('alarm_file_name', null);
                 }
-                
-                // Get parameters
                 const minSeverityVal = document.getElementById('alarms-min-severity').value;
                 const params = {
                     mode: document.getElementById('mode').value,
@@ -1017,39 +580,25 @@
                     alarms_keep_event_types: document.getElementById('alarms-keep-event-types').value,
                     alarms_min_severity: minSeverityVal ? parseInt(minSeverityVal) : null
                 };
-                
                 pyodide.globals.set('params', pyodide.toPy(params));
-                
                 setStatus('Processing SCADA data...', 'loading', 30);
                 log('Parameters set, running analysis...', 'info');
-
-                // Run the analysis
                 const result = await pyodide.runPythonAsync(`
 import json
 alarm_bytes = alarm_file_bytes.to_py() if alarm_file_bytes is not None else None
 alarm_name = alarm_file_name if alarm_file_name is not None else None
 run_browser_analysis(input_file_bytes.to_py(), input_file_name, params, alarm_bytes, alarm_name)
                 `);
-                
                 const resultObj = JSON.parse(result);
-                
                 if (resultObj.success) {
                     setStatus('Analysis complete!', 'success', 100);
                     let msg = `Found ${resultObj.wtg_count} WTGs, ${resultObj.windows_found} windows`;
-                    if (resultObj.alarms_processed) {
-                        msg += `, ${resultObj.alarm_events_total} alarm events`;
-                    }
+                    if (resultObj.alarms_processed) { msg += `, ${resultObj.alarm_events_total} alarm events`; }
                     log(msg, 'success');
-                    
-                    // Show results
                     displayResults(resultObj);
-                    
-                    // Get output file
                     const outputBytes = pyodide.globals.get('output_excel_bytes');
                     if (outputBytes) {
-                        outputBlob = new Blob([outputBytes.toJs()], {
-                            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                        });
+                        outputBlob = new Blob([outputBytes.toJs()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                         downloadBtn.style.display = 'block';
                         log('Excel report ready for download', 'success');
                     }
@@ -1068,36 +617,24 @@ run_browser_analysis(input_file_bytes.to_py(), input_file_name, params, alarm_by
 
         function displayResults(result) {
             resultsContent.innerHTML = '';
-            
             const stats = [
                 ['WTGs Detected', result.wtg_count],
                 ['Windows Found', result.windows_found],
                 ['Bin Size', `${result.bin_minutes} min`],
                 ['Processing Time', `${result.processing_time}s`]
             ];
-            
-            // Add alarm info if processed
-            if (result.alarms_processed) {
-                stats.push(['Alarm Events', result.alarm_events_total]);
-            }
-            
+            if (result.alarms_processed) { stats.push(['Alarm Events', result.alarm_events_total]); }
             stats.forEach(([label, value]) => {
                 const stat = document.createElement('div');
                 stat.className = 'result-stat';
-                stat.innerHTML = `
-                    <span class="stat-label">${label}</span>
-                    <span class="stat-value">${value}</span>
-                `;
+                stat.innerHTML = `<span class="stat-label">${label}</span><span class="stat-value">${value}</span>`;
                 resultsContent.appendChild(stat);
             });
-            
             resultsCard.classList.add('visible');
         }
 
-        // Download handler
         downloadBtn.addEventListener('click', () => {
             if (!outputBlob) return;
-            
             const url = URL.createObjectURL(outputBlob);
             const a = document.createElement('a');
             a.href = url;
@@ -1106,11 +643,9 @@ run_browser_analysis(input_file_bytes.to_py(), input_file_name, params, alarm_by
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            
             log('Downloaded: Run_Test_Windows.xlsx', 'success');
         });
 
-        // Initialize on load
         window.addEventListener('DOMContentLoaded', initPyodide);
     </script>
 </body>
