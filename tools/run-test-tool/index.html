@@ -113,6 +113,11 @@
         body.light-mode input[type="number"], body.light-mode input[type="text"], body.light-mode select { background: white; }
         input:focus, select:focus { outline: none; border-color: var(--accent-color); box-shadow: 0 0 0 3px rgba(136, 176, 255, 0.2); }
         body.light-mode input:focus, body.light-mode select:focus { box-shadow: 0 0 0 3px rgba(0,123,255,0.1); }
+        textarea {
+            width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); font-family: inherit; font-size: 14px; min-height: 140px;
+        }
+        body.light-mode textarea { background: white; }
+        textarea:focus { outline: none; border-color: var(--accent-color); box-shadow: 0 0 0 3px rgba(136, 176, 255, 0.2); }
 
         .btn {
             display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
@@ -178,6 +183,15 @@
 
         .info-tip { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; background: #555; border-radius: 50%; font-size: 0.7rem; color: #b0b0b0; cursor: help; margin-left: 0.25rem; }
         body.light-mode .info-tip { background: #ccc; color: #666; }
+
+        .preview-table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 13px; }
+        .preview-table th, .preview-table td { border: 1px solid var(--border-color); padding: 6px 8px; text-align: right; }
+        .preview-table th { background: rgba(136, 176, 255, 0.1); text-align: left; }
+        body.light-mode .preview-table th { background: #eef5ff; }
+
+        .data-status { color: #888; }
+        .data-status.has-data { color: var(--success-color); }
+        .data-status.has-data::before { content: '✓ '; }
     </style>
 </head>
 <body>
@@ -222,20 +236,19 @@
         </div>
     </div>
 
-    <!-- File Upload Cards Row -->
+    <!-- Data Paste Cards Row -->
     <div class="upload-row">
         <div class="card" style="margin-bottom: 0;">
             <div class="card-header">
-                <div class="card-icon"><i class="fa-solid fa-folder-open"></i></div>
+                <div class="card-icon"><i class="fa-solid fa-paste"></i></div>
                 <span class="card-title">SCADA Data Input</span>
             </div>
-            <div class="upload-zone" id="upload-zone">
-                <div class="upload-icon"><i class="fa-solid fa-file-arrow-up"></i></div>
-                <div class="upload-text">Drop your SCADA file here or click to browse</div>
-                <div class="upload-hint">Supports .xlsx, .xls, .csv, .tsv</div>
-                <div class="file-name" id="file-name"></div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Paste SCADA data (tab or comma separated)</label>
+                <textarea id="scada-data-input" placeholder="Paste your SCADA data here...&#10;&#10;Example:&#10;PCTimeStamp&#9;WTG01_Power&#9;WTG01_State&#9;WTG01_ReportCategory&#10;2024-01-01 00:00:00&#9;1500&#9;Running&#9;Normal operation" style="min-height: 200px; font-family: monospace; font-size: 12px;"></textarea>
+                <div class="upload-hint" style="margin-top: 0.5rem;"><i class="fa-solid fa-circle-info"></i> Copy data from Excel/spreadsheet and paste directly</div>
+                <div class="data-status" id="scada-data-status" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
             </div>
-            <input type="file" id="file-input" accept=".xlsx,.xls,.csv,.tsv">
         </div>
 
         <div class="card" style="margin-bottom: 0;">
@@ -243,13 +256,52 @@
                 <div class="card-icon"><i class="fa-solid fa-bell"></i></div>
                 <span class="card-title">Alarm Log (Optional)</span>
             </div>
-            <div class="upload-zone" id="alarm-upload-zone">
-                <div class="upload-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
-                <div class="upload-text">Drop your Alarm Log file here or click to browse</div>
-                <div class="upload-hint">Optional - filters alarms for each test window</div>
-                <div class="file-name" id="alarm-file-name"></div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Paste Alarm Log data (tab or comma separated)</label>
+                <textarea id="alarm-data-input" placeholder="Paste your Alarm Log data here (optional)...&#10;&#10;Example:&#10;Timestamp&#9;WTG&#9;EventType&#9;Severity&#9;Description&#10;2024-01-01 00:00:00&#9;WTG01&#9;Alarm&#9;3&#9;High wind shutdown" style="min-height: 200px; font-family: monospace; font-size: 12px;"></textarea>
+                <div class="upload-hint" style="margin-top: 0.5rem;"><i class="fa-solid fa-circle-info"></i> Optional - filters alarms for each test window</div>
+                <div class="data-status" id="alarm-data-status" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
             </div>
-            <input type="file" id="alarm-file-input" accept=".xlsx,.xls,.csv,.tsv">
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon"><i class="fa-solid fa-bolt"></i></div>
+            <span class="card-title">Power Curve & Columns</span>
+        </div>
+        <div class="form-group">
+            <label>Power Curve (paste WS rows, air density columns)</label>
+            <textarea id="power-curve-text" placeholder="WS [m/s] 1.225 0.950 0.975 1.000 ...
+3.0 81 51 54 ..."></textarea>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Air Density Column (preferred)</label>
+                <input type="text" id="air-density-col-hint" placeholder="e.g., WTG01_Ambient Airdensity AirDensityAvg Avg">
+            </div>
+            <div class="form-group">
+                <label>Wind Speed Column</label>
+                <input type="text" id="wind-col-hint" placeholder="e.g., WTG01_Wind speed, Average">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Air Density When Missing</label>
+                <select id="air-density-behavior">
+                    <option value="prompt" selected>Ask to supply column or default</option>
+                    <option value="default">Use default automatically</option>
+                    <option value="fail">Fail if missing</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Default Air Density (kg/m³)</label>
+                <input type="number" id="air-density-default" value="1.225" min="0" step="0.001">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Performance Ratio Threshold</label>
+            <input type="number" id="pr-threshold" value="0.97" min="0" max="2" step="0.01">
         </div>
     </div>
 
@@ -397,6 +449,7 @@
             <span class="card-title">Results Summary</span>
         </div>
         <div id="results-content"></div>
+        <div id="preview-container"></div>
         <div class="download-section">
             <button class="btn btn-primary" id="download-btn" style="display: none;">
                 <i class="fa-solid fa-download"></i> Download Excel Report
@@ -418,16 +471,12 @@
     <script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
     <script>
         let pyodide = null;
-        let uploadedFile = null;
-        let alarmFile = null;
         let outputBlob = null;
 
-        const uploadZone = document.getElementById('upload-zone');
-        const fileInput = document.getElementById('file-input');
-        const fileNameDisplay = document.getElementById('file-name');
-        const alarmUploadZone = document.getElementById('alarm-upload-zone');
-        const alarmFileInput = document.getElementById('alarm-file-input');
-        const alarmFileNameDisplay = document.getElementById('alarm-file-name');
+        const scadaDataInput = document.getElementById('scada-data-input');
+        const scadaDataStatus = document.getElementById('scada-data-status');
+        const alarmDataInput = document.getElementById('alarm-data-input');
+        const alarmDataStatus = document.getElementById('alarm-data-status');
         const runBtn = document.getElementById('run-btn');
         const consoleEl = document.getElementById('console');
         const statusContainer = document.getElementById('status-container');
@@ -436,8 +485,15 @@
         const progressFill = document.getElementById('progress-fill');
         const resultsCard = document.getElementById('results-card');
         const resultsContent = document.getElementById('results-content');
+        const previewContainer = document.getElementById('preview-container');
         const downloadBtn = document.getElementById('download-btn');
         const loadingOverlay = document.getElementById('pyodide-loading');
+        const powerCurveTextEl = document.getElementById('power-curve-text');
+        const airDensityColHintEl = document.getElementById('air-density-col-hint');
+        const windColHintEl = document.getElementById('wind-col-hint');
+        const airDensityBehaviorEl = document.getElementById('air-density-behavior');
+        const airDensityDefaultEl = document.getElementById('air-density-default');
+        const prThresholdEl = document.getElementById('pr-threshold');
 
         function log(message, type = '') {
             const line = document.createElement('div');
@@ -458,38 +514,41 @@
 
         function toggleAccordion(id) { document.getElementById(id).classList.toggle('open'); }
 
-        uploadZone.addEventListener('click', () => fileInput.click());
-        uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
-        uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
-        uploadZone.addEventListener('drop', (e) => { e.preventDefault(); uploadZone.classList.remove('drag-over'); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
-        fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
-
-        function handleFile(file) {
-            const validTypes = ['.xlsx', '.xls', '.csv', '.tsv'];
-            const ext = '.' + file.name.split('.').pop().toLowerCase();
-            if (!validTypes.includes(ext)) { log(`Invalid file type: ${ext}. Please use xlsx, xls, csv, or tsv.`, 'error'); return; }
-            uploadedFile = file;
-            fileNameDisplay.textContent = file.name;
-            uploadZone.classList.add('has-file');
-            log(`SCADA file loaded: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`, 'success');
-            if (pyodide) { runBtn.disabled = false; }
+        function updateDataStatus(textarea, statusEl, label) {
+            const text = textarea.value.trim();
+            if (!text) {
+                statusEl.textContent = '';
+                statusEl.classList.remove('has-data');
+                return { hasData: false, rows: 0, cols: 0 };
+            }
+            const lines = text.split('\n').filter(l => l.trim());
+            const firstLine = lines[0] || '';
+            const delimiter = firstLine.includes('\t') ? '\t' : ',';
+            const cols = firstLine.split(delimiter).length;
+            statusEl.textContent = `${lines.length} rows, ${cols} columns detected`;
+            statusEl.classList.add('has-data');
+            return { hasData: true, rows: lines.length, cols: cols };
         }
 
-        alarmUploadZone.addEventListener('click', () => alarmFileInput.click());
-        alarmUploadZone.addEventListener('dragover', (e) => { e.preventDefault(); alarmUploadZone.classList.add('drag-over'); });
-        alarmUploadZone.addEventListener('dragleave', () => alarmUploadZone.classList.remove('drag-over'));
-        alarmUploadZone.addEventListener('drop', (e) => { e.preventDefault(); alarmUploadZone.classList.remove('drag-over'); if (e.dataTransfer.files.length) handleAlarmFile(e.dataTransfer.files[0]); });
-        alarmFileInput.addEventListener('change', (e) => { if (e.target.files.length) handleAlarmFile(e.target.files[0]); });
-
-        function handleAlarmFile(file) {
-            const validTypes = ['.xlsx', '.xls', '.csv', '.tsv'];
-            const ext = '.' + file.name.split('.').pop().toLowerCase();
-            if (!validTypes.includes(ext)) { log(`Invalid alarm file type: ${ext}. Please use xlsx, xls, csv, or tsv.`, 'error'); return; }
-            alarmFile = file;
-            alarmFileNameDisplay.textContent = file.name;
-            alarmUploadZone.classList.add('has-file');
-            log(`Alarm file loaded: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`, 'success');
+        function checkRunEnabled() {
+            const scadaHasData = scadaDataInput.value.trim().length > 0;
+            runBtn.disabled = !(pyodide && scadaHasData);
         }
+
+        scadaDataInput.addEventListener('input', () => {
+            const result = updateDataStatus(scadaDataInput, scadaDataStatus, 'SCADA');
+            if (result.hasData) {
+                log(`SCADA data pasted: ${result.rows} rows, ${result.cols} columns`, 'success');
+            }
+            checkRunEnabled();
+        });
+
+        alarmDataInput.addEventListener('input', () => {
+            const result = updateDataStatus(alarmDataInput, alarmDataStatus, 'Alarm');
+            if (result.hasData) {
+                log(`Alarm data pasted: ${result.rows} rows, ${result.cols} columns`, 'success');
+            }
+        });
 
         async function initPyodide() {
             loadingOverlay.classList.add('visible');
@@ -508,7 +567,7 @@
                 await loadReliabilityScript();
                 loadingOverlay.classList.remove('visible');
                 log('Python runtime ready!', 'success');
-                if (uploadedFile) { runBtn.disabled = false; }
+                checkRunEnabled();
             } catch (error) {
                 loadingOverlay.classList.remove('visible');
                 log(`Failed to initialize Pyodide: ${error.message}`, 'error');
@@ -536,28 +595,28 @@
             }
         }
 
-        runBtn.addEventListener('click', runAnalysis);
+        runBtn.addEventListener('click', () => runAnalysis());
 
-        async function runAnalysis() {
-            if (!pyodide || !uploadedFile) return;
+        async function runAnalysis(overrides = {}, allowRetry = true) {
+            const scadaData = scadaDataInput.value.trim();
+            if (!pyodide || !scadaData) return;
             log('Starting analysis...', 'info');
-            setStatus('Reading file...', 'loading', 10);
+            setStatus('Processing pasted data...', 'loading', 10);
             runBtn.disabled = true;
             resultsCard.classList.remove('visible');
             downloadBtn.style.display = 'none';
+            previewContainer.innerHTML = '';
             try {
-                const arrayBuffer = await uploadedFile.arrayBuffer();
-                const uint8Array = new Uint8Array(arrayBuffer);
-                pyodide.globals.set('input_file_bytes', uint8Array);
-                pyodide.globals.set('input_file_name', uploadedFile.name);
-                if (alarmFile) {
-                    const alarmArrayBuffer = await alarmFile.arrayBuffer();
-                    const alarmUint8Array = new Uint8Array(alarmArrayBuffer);
-                    pyodide.globals.set('alarm_file_bytes', alarmUint8Array);
-                    pyodide.globals.set('alarm_file_name', alarmFile.name);
-                    log(`Alarm file included: ${alarmFile.name}`, 'info');
+                // Pass pasted data as string instead of file bytes
+                pyodide.globals.set('input_data_text', scadaData);
+                pyodide.globals.set('input_file_name', 'pasted_data.csv');
+                const alarmData = alarmDataInput.value.trim();
+                if (alarmData) {
+                    pyodide.globals.set('alarm_data_text', alarmData);
+                    pyodide.globals.set('alarm_file_name', 'pasted_alarms.csv');
+                    log('Alarm data included', 'info');
                 } else {
-                    pyodide.globals.set('alarm_file_bytes', null);
+                    pyodide.globals.set('alarm_data_text', null);
                     pyodide.globals.set('alarm_file_name', null);
                 }
                 const minSeverityVal = document.getElementById('alarms-min-severity').value;
@@ -578,16 +637,23 @@
                     disqualifying_window_categories: document.getElementById('disqualifying-window-categories').value,
                     wtg_separators: document.getElementById('wtg-separators').value,
                     alarms_keep_event_types: document.getElementById('alarms-keep-event-types').value,
-                    alarms_min_severity: minSeverityVal ? parseInt(minSeverityVal) : null
+                    alarms_min_severity: minSeverityVal ? parseInt(minSeverityVal) : null,
+                    power_curve_text: powerCurveTextEl.value,
+                    air_density_column_hint: airDensityColHintEl.value.trim() || null,
+                    wind_speed_column_hint: windColHintEl.value.trim() || null,
+                    air_density_behavior: airDensityBehaviorEl.value,
+                    air_density_default: parseFloat(airDensityDefaultEl.value) || 1.225,
+                    pr_threshold: parseFloat(prThresholdEl.value) || 0.97
                 };
+                Object.assign(params, overrides);
                 pyodide.globals.set('params', pyodide.toPy(params));
                 setStatus('Processing SCADA data...', 'loading', 30);
                 log('Parameters set, running analysis...', 'info');
                 const result = await pyodide.runPythonAsync(`
 import json
-alarm_bytes = alarm_file_bytes.to_py() if alarm_file_bytes is not None else None
+alarm_text = alarm_data_text if alarm_data_text is not None else None
 alarm_name = alarm_file_name if alarm_file_name is not None else None
-run_browser_analysis(input_file_bytes.to_py(), input_file_name, params, alarm_bytes, alarm_name)
+run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_text, alarm_name)
                 `);
                 const resultObj = JSON.parse(result);
                 if (resultObj.success) {
@@ -603,8 +669,25 @@ run_browser_analysis(input_file_bytes.to_py(), input_file_name, params, alarm_by
                         log('Excel report ready for download', 'success');
                     }
                 } else {
-                    setStatus('Analysis failed', 'error', 100);
-                    log(`Error: ${resultObj.error}`, 'error');
+                    if (resultObj.need_air_density_choice && allowRetry) {
+                        const defaultVal = params.air_density_default || 1.225;
+                        const promptMsg = resultObj.message || `Air density column missing. Use default ${defaultVal}?`;
+                        const useDefault = window.confirm(`${promptMsg}\n\nOK = use default ${defaultVal}.\nCancel = supply column name.`);
+                        if (useDefault) {
+                            log('User chose default air density fallback.', 'warning');
+                            return await runAnalysis({ air_density_behavior: 'default' }, false);
+                        }
+                        const colName = window.prompt('Supply air density column name (include WTG prefix if needed):');
+                        if (colName && colName.trim()) {
+                            log(`User supplied air density column: ${colName.trim()}`, 'info');
+                            return await runAnalysis({ air_density_column_hint: colName.trim(), air_density_behavior: 'prompt' }, false);
+                        }
+                        setStatus('Analysis failed', 'error', 100);
+                        log(promptMsg, 'error');
+                    } else {
+                        setStatus('Analysis failed', 'error', 100);
+                        log(`Error: ${resultObj.error || resultObj.message}`, 'error');
+                    }
                 }
             } catch (error) {
                 setStatus('Analysis failed', 'error', 100);
@@ -617,6 +700,7 @@ run_browser_analysis(input_file_bytes.to_py(), input_file_name, params, alarm_by
 
         function displayResults(result) {
             resultsContent.innerHTML = '';
+            previewContainer.innerHTML = '';
             const stats = [
                 ['WTGs Detected', result.wtg_count],
                 ['Windows Found', result.windows_found],
@@ -630,7 +714,43 @@ run_browser_analysis(input_file_bytes.to_py(), input_file_name, params, alarm_by
                 stat.innerHTML = `<span class="stat-label">${label}</span><span class="stat-value">${value}</span>`;
                 resultsContent.appendChild(stat);
             });
+            if (result.preview && result.preview.columns && result.preview.rows) {
+                renderPreview(result.preview);
+            }
             resultsCard.classList.add('visible');
+        }
+
+        function renderPreview(preview) {
+            const table = document.createElement('table');
+            table.className = 'preview-table';
+            const thead = document.createElement('thead');
+            const headRow = document.createElement('tr');
+            preview.columns.forEach(col => {
+                const th = document.createElement('th');
+                th.textContent = col;
+                headRow.appendChild(th);
+            });
+            thead.appendChild(headRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            preview.rows.forEach(r => {
+                const tr = document.createElement('tr');
+                r.forEach(val => {
+                    const td = document.createElement('td');
+                    td.textContent = val === null ? '' : val;
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+
+            const title = document.createElement('div');
+            title.style.marginTop = '1rem';
+            title.style.fontWeight = '600';
+            title.textContent = 'Preview (first rows with wind speed, air density, expected power, PR)';
+            previewContainer.appendChild(title);
+            previewContainer.appendChild(table);
         }
 
         downloadBtn.addEventListener('click', () => {

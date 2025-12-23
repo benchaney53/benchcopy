@@ -15,9 +15,18 @@ import bisect
 import numpy as np
 import pandas as pd
 
+
+class MissingAirDensityError(Exception):
+    def __init__(self, wtg: str, available_columns: list):
+        self.wtg = wtg
+        self.available_columns = available_columns
+        super().__init__(f"Air density column missing for {wtg}")
+
 # Detection candidates
 TIMESTAMP_CANDIDATES = ['PCTimeStamp', 'Timestamp', 'TimeStamp', 'DateTime', 'Datetime', 'Time', 'Date']
 POWER_SUFFIX_CANDIDATES = ['Power, Average', 'Grid Production Power Avg.', 'Total Active power']
+WIND_SPEED_SUFFIX_CANDIDATES = ['Wind speed, Average', 'Ambient WindSpeed Avg.']
+AIR_DENSITY_SUFFIX_CANDIDATES = ['Ambient Airdensity AirDensityAvg Avg']
 STATE_SUFFIX = 'System States TurbineState'
 CAT_SUFFIX = '1_Report Category'
 
@@ -40,6 +49,118 @@ def _clean_colname(name: str) -> str:
     s = s.replace("\xa0", " ")
     s = re.sub(r"\s+", " ", s)
     return s
+
+
+def _is_number(val: str) -> bool:
+    try:
+        float(val)
+        return True
+    except Exception:
+        return False
+
+
+def parse_power_curve_text(text: str) -> pd.DataFrame:
+    """Parse a pasted power curve table (wind speed rows, air density columns)."""
+    if not text or not text.strip():
+        raise ValueError('Power curve text is empty.')
+    raw_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not raw_lines:
+        raise ValueError('Power curve text is empty after trimming.')
+
+    def _tokens(line: str) -> list:
+        return [t for t in re.split(r"[\s,]+", line.strip()) if t]
+
+    header_idx = None
+    for idx, ln in enumerate(raw_lines):
+        toks = _tokens(ln)
+        joined = ' '.join(toks).lower()
+        if 'ws' in joined and any(_is_number(t) for t in toks):
+            header_idx = idx
+            header_tokens = toks
+            break
+    if header_idx is None:
+        raise ValueError('Could not locate header row containing WS and air density values.')
+
+    num_start = next((i for i, t in enumerate(header_tokens) if _is_number(t)), None)
+    if num_start is None:
+        raise ValueError('Header row missing numeric air density values.')
+    first_col = ' '.join(header_tokens[:num_start]).strip() or 'WS'
+    density_values = [float(t) for t in header_tokens[num_start:]]
+    expected_cols = 1 + len(density_values)
+
+    rows = []
+    i = header_idx + 1
+    while i < len(raw_lines):
+        toks = _tokens(raw_lines[i])
+        if not toks:
+            i += 1
+            continue
+        if len(toks) == 1 and _is_number(toks[0]) and i + 1 < len(raw_lines):
+            nxt = _tokens(raw_lines[i + 1])
+            if len(nxt) == len(density_values) and all(_is_number(t) for t in nxt):
+                row = [float(toks[0])] + [float(x) for x in nxt]
+                rows.append(row)
+                i += 2
+                continue
+        if _is_number(toks[0]) and len(toks) == expected_cols and all(_is_number(t) for t in toks[1:]):
+            row = [float(toks[0])] + [float(x) for x in toks[1:]]
+            rows.append(row)
+        i += 1
+
+    if not rows:
+        raise ValueError('No power curve rows parsed; check pasted format.')
+
+    col_names = [first_col] + [str(d) for d in density_values]
+    return pd.DataFrame(rows, columns=col_names)
+
+
+def prepare_power_curve(curve_df: pd.DataFrame):
+    ws_vals = pd.to_numeric(curve_df.iloc[:, 0], errors='coerce').to_numpy()
+    ad_vals = np.array([float(c) for c in curve_df.columns[1:]], dtype=float)
+    grid = curve_df.iloc[:, 1:].apply(pd.to_numeric, errors='coerce').to_numpy(dtype=float)
+    if ws_vals.size == 0 or ad_vals.size == 0:
+        raise ValueError('Power curve must include wind speed and air density columns.')
+    return ws_vals, ad_vals, grid
+
+
+def interpolate_power_curve(curve_arrays, wind_speed: float, air_density: float) -> float:
+    ws_vals, ad_vals, grid = curve_arrays
+    if not np.isfinite(wind_speed) or not np.isfinite(air_density):
+        return float('nan')
+    ws_clamped = float(np.clip(wind_speed, ws_vals.min(), ws_vals.max()))
+    ad_clamped = float(np.clip(air_density, ad_vals.min(), ad_vals.max()))
+
+    i = np.searchsorted(ws_vals, ws_clamped)
+    j = np.searchsorted(ad_vals, ad_clamped)
+    i0 = max(i - 1, 0); i1 = min(i, len(ws_vals) - 1)
+    j0 = max(j - 1, 0); j1 = min(j, len(ad_vals) - 1)
+    ws0, ws1 = ws_vals[i0], ws_vals[i1]
+    ad0, ad1 = ad_vals[j0], ad_vals[j1]
+    q11 = grid[i0, j0]; q12 = grid[i0, j1]; q21 = grid[i1, j0]; q22 = grid[i1, j1]
+
+    if ws1 == ws0 and ad1 == ad0:
+        return float(q11)
+    if ws1 == ws0:
+        denom = (ad1 - ad0) if ad1 != ad0 else 1e-9
+        t = (ad_clamped - ad0) / denom
+        return float(q11 + (q12 - q11) * t)
+    if ad1 == ad0:
+        denom = (ws1 - ws0) if ws1 != ws0 else 1e-9
+        t = (ws_clamped - ws0) / denom
+        return float(q11 + (q21 - q11) * t)
+
+    t = (ws_clamped - ws0) / (ws1 - ws0)
+    u = (ad_clamped - ad0) / (ad1 - ad0)
+    return float((1 - t) * (1 - u) * q11 + (1 - t) * u * q12 + t * (1 - u) * q21 + t * u * q22)
+
+
+def compute_expected_power(ws_series: pd.Series, ad_series: pd.Series, curve_arrays) -> np.ndarray:
+    ws_vals = pd.to_numeric(ws_series, errors='coerce').to_numpy()
+    ad_vals = pd.to_numeric(ad_series, errors='coerce').to_numpy()
+    out = np.empty(len(ws_vals), dtype=float)
+    for idx, (ws, ad) in enumerate(zip(ws_vals, ad_vals)):
+        out[idx] = interpolate_power_curve(curve_arrays, ws, ad)
+    return out
 
 
 def normalize_headers(df: pd.DataFrame, header_row_1based=None) -> pd.DataFrame:
@@ -270,7 +391,9 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
                             rated_power_kw: float, bin_minutes: float,
                             nominal_threshold_pct: float,
                             blocked_set: set, active_base_set: set,
-                            energy_power_col: str) -> tuple:
+                            energy_power_col: str,
+                            pr_threshold: float,
+                            air_density_source: str) -> tuple:
     """Evaluate a window and build summary."""
     slice_df = d.iloc[s_idx:e_idx+1].copy()
     cats_norm = _normalize_category_series(slice_df[cat_col].astype(str))
@@ -282,9 +405,12 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
     
     availability_pct = (100.0 * np.mean(~unavail_mask[active_idx])) if len(active_idx) else float('nan')
     
-    power = pd.to_numeric(slice_df[power_col], errors='coerce').to_numpy()
-    threshold_kw = rated_power_kw * (nominal_threshold_pct / 100.0)
-    nominal_mask = np.isfinite(power) & (power >= threshold_kw)
+    if '_NominalFlag' in slice_df.columns:
+        nominal_mask = slice_df['_NominalFlag'].to_numpy().astype(bool)
+    else:
+        power = pd.to_numeric(slice_df[power_col], errors='coerce').to_numpy()
+        threshold_kw = rated_power_kw * (nominal_threshold_pct / 100.0)
+        nominal_mask = np.isfinite(power) & (power >= threshold_kw)
     nominal_valid = nominal_mask.copy()
     nominal_valid[~active_mask] = False
     total_nominal_hours = nominal_valid.sum() * (bin_minutes / 60.0)
@@ -305,6 +431,8 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
     span_hours = (e_idx - s_idx + 1) * bin_minutes / 60.0
     paused_hours = int((~active_mask).sum()) * bin_minutes / 60.0
     
+    avg_pr = float(np.nanmean(slice_df['_PerformanceRatio'])) if '_PerformanceRatio' in slice_df.columns else float('nan')
+
     summary = {
         'WTG': wtg,
         'Rated Power (kW)': rated_power_kw,
@@ -323,6 +451,9 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
         'State Column': state_col,
         'Category Column': cat_col,
         'Window Categories Seen': ','.join(sorted(cats_norm.unique().tolist())),
+        'Average Performance Ratio': round(avg_pr, 3) if np.isfinite(avg_pr) else float('nan'),
+        'PR Threshold Used': pr_threshold,
+        'Air Density Source': air_density_source,
     }
     return slice_df, summary
 
@@ -336,7 +467,13 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                      mode: str,
                      allowed_window_categories: list,
                      disqualifying_window_categories: list,
-                     enforce_allowed_window_categories: bool) -> dict:
+                     enforce_allowed_window_categories: bool,
+                     power_curve_arrays,
+                     pr_threshold: float,
+                     air_density_default: float,
+                     air_density_behavior: str,
+                     wind_col_hint: str = None,
+                     air_density_col_hint: str = None) -> dict:
     """Process a single WTG using optimized algorithm from hotfix."""
     
     # Resolve columns
@@ -354,6 +491,28 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     if cat_col not in d.columns:
         return {'wtg': wtg, 'summary': {'WTG': wtg, 'Mode': mode, 'Status': 'FAILED',
                                         'Reason': f'No category column found for {wtg}'}, 'data_slice': d.head(0)}
+
+    wind_col = wind_col_hint if (wind_col_hint and wind_col_hint in d.columns) else find_col_with_suffix(d.columns.tolist(), wtg, WIND_SPEED_SUFFIX_CANDIDATES, seps)
+    if wind_col is None:
+        return {'wtg': wtg, 'summary': {'WTG': wtg, 'Mode': mode, 'Status': 'FAILED',
+                                        'Reason': f'No wind speed column found for {wtg}'}, 'data_slice': d.head(0)}
+
+    air_col = air_density_col_hint if (air_density_col_hint and air_density_col_hint in d.columns) else find_col_with_suffix(d.columns.tolist(), wtg, AIR_DENSITY_SUFFIX_CANDIDATES, seps)
+    air_density_source = 'column'
+    if air_col is None:
+        if air_density_behavior == 'default':
+            air_density_source = f'default {air_density_default}'
+            air_series = pd.Series([air_density_default] * len(d), index=d.index)
+        elif air_density_behavior == 'prompt':
+            raise MissingAirDensityError(wtg, d.columns.tolist())
+        else:
+            return {'wtg': wtg, 'summary': {'WTG': wtg, 'Mode': mode, 'Status': 'FAILED',
+                                            'Reason': f'No air density column found for {wtg}'}, 'data_slice': d.head(0)}
+    else:
+        air_series = pd.to_numeric(d[air_col], errors='coerce')
+
+    wind_series = pd.to_numeric(d[wind_col], errors='coerce')
+    expected_power = compute_expected_power(wind_series, air_series, power_curve_arrays)
     
     # Normalize sets & arrays
     cats_norm_full = _normalize_category_series(d[cat_col].astype(str))
@@ -366,13 +525,21 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     paused_full = (~cats_norm_full.isin(blocked_set) & (~cats_norm_full.isin(active_base_set))).to_numpy()
     active_full = ~paused_full
     
-    # Precompute prefix sums
+    # Precompute prefix sums and performance ratio based nominal flags
     pwr = pd.to_numeric(d[power_col], errors='coerce').to_numpy()
+    perf_ratio = np.divide(pwr, expected_power, out=np.full_like(expected_power, np.nan), where=np.isfinite(expected_power))
+    threshold_kw = rated_power_kw * (nominal_threshold_pct / 100.0)
+    fallback_nominal = np.isfinite(pwr) & (pwr >= threshold_kw)
+    nominal_full = np.where(np.isfinite(perf_ratio), perf_ratio >= pr_threshold, fallback_nominal)
+    
+    d['_WindSpeed'] = wind_series
+    d['_AirDensityUsed'] = air_series if air_col is not None else pd.Series([air_density_default] * len(d), index=d.index)
+    d['_ExpectedPower'] = expected_power
+    d['_PerformanceRatio'] = perf_ratio
+    d['_NominalFlag'] = nominal_full
+
     energy_full_kw = pd.to_numeric(d[energy_power_col], errors='coerce').fillna(0.0).to_numpy()
     e_kwh_per_row = energy_full_kw * (bin_minutes / 60.0)
-    
-    threshold_kw = rated_power_kw * (nominal_threshold_pct / 100.0)
-    nominal_full = np.isfinite(pwr) & (pwr >= threshold_kw)
     
     ps_active = np.cumsum(active_full.astype(np.int32))
     ps_nominal_active = np.cumsum((nominal_full & active_full).astype(np.int32))
@@ -488,7 +655,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         slice_df, summ = _evaluate_and_summarize(d, ts_col, wtg, power_col, state_col, cat_col,
                                                  s_idx, e_idx, rated_power_kw, bin_minutes,
                                                  nominal_threshold_pct, blocked_set, active_base_set,
-                                                 energy_power_col)
+                                                 energy_power_col, pr_threshold, air_density_source)
         summ.update({'Mode': mode, 'Status': 'completed_due_to_climatic_conditions', 'Nominal 24h Achieved': False})
         return {'wtg': wtg, 'summary': summ, 'data_slice': slice_df}
     
@@ -496,7 +663,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     slice_df, summ = _evaluate_and_summarize(d, ts_col, wtg, power_col, state_col, cat_col,
                                              s_idx, e_idx, rated_power_kw, bin_minutes,
                                              nominal_threshold_pct, blocked_set, active_base_set,
-                                             energy_power_col)
+                                             energy_power_col, pr_threshold, air_density_source)
     summ.update({'Mode': mode,
                  'Contains 24h subwindow >= 3x floor': bool(chosen['contains_3x']),
                  'Contains 24h subwindow >= 1x floor': bool(chosen['contains_1x'])})
@@ -581,6 +748,19 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         allowed_window_categories = [x.strip() for x in params.get('allowed_window_categories', 'Normal operation,Scheduled maintenance,Owner,Environmental,Utility').split(',') if x.strip()]
         disqualifying_window_categories = [x.strip() for x in params.get('disqualifying_window_categories', 'Manufacturer,Unscheduled maintenance').split(',') if x.strip()]
         enforce_allowed = not params.get('no_enforce_allowed_window', False)
+
+        pr_threshold = float(params.get('pr_threshold', 0.97))
+        air_density_default = float(params.get('air_density_default', 1.225))
+        air_density_behavior = params.get('air_density_behavior', 'prompt')
+        wind_col_hint = params.get('wind_speed_column_hint')
+        air_density_col_hint = params.get('air_density_column_hint')
+        power_curve_text = params.get('power_curve_text', '') or ''
+        if not power_curve_text.strip():
+            return json.dumps({'success': False, 'error': 'Power curve text is required for expected power calculation.'})
+        log('Parsing power curve text...')
+        power_curve_df = parse_power_curve_text(power_curve_text)
+        power_curve_arrays = prepare_power_curve(power_curve_df)
+        log(f"Power curve parsed: {len(power_curve_df)} wind speed rows, {len(power_curve_df.columns) - 1} air density columns")
         
         # Energy source
         energy_source = params.get('energy_source', 'power')
@@ -643,25 +823,41 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             keep_cols = [c for c in df.columns if c == ts_col or c.startswith(prefix)]
             wtg_df = df.loc[:, keep_cols].copy()
             
-            result = process_wtg_fast(
-                d=wtg_df,
-                ts_col=ts_col,
-                wtg=wtg,
-                rated_power_kw=float(params.get('rated_power_kw', 4500)),
-                bin_minutes=bin_minutes,
-                test_hours=int(params.get('test_hours', 72)),
-                extension_hours=int(params.get('extension_hours', 24)),
-                min_availability_pct=min_availability_pct,
-                nominal_threshold_pct=float(params.get('nominal_threshold_pct', 99)),
-                allowed_categories=allowed_categories,
-                disallowed_categories=disallowed_categories,
-                active_base_categories=active_base_categories,
-                energy_source=energy_source,
-                mode=mode,
-                allowed_window_categories=allowed_window_categories,
-                disqualifying_window_categories=disqualifying_window_categories,
-                enforce_allowed_window_categories=enforce_allowed
-            )
+            try:
+                result = process_wtg_fast(
+                    d=wtg_df,
+                    ts_col=ts_col,
+                    wtg=wtg,
+                    rated_power_kw=float(params.get('rated_power_kw', 4500)),
+                    bin_minutes=bin_minutes,
+                    test_hours=int(params.get('test_hours', 72)),
+                    extension_hours=int(params.get('extension_hours', 24)),
+                    min_availability_pct=min_availability_pct,
+                    nominal_threshold_pct=float(params.get('nominal_threshold_pct', 99)),
+                    allowed_categories=allowed_categories,
+                    disallowed_categories=disallowed_categories,
+                    active_base_categories=active_base_categories,
+                    energy_source=energy_source,
+                    mode=mode,
+                    allowed_window_categories=allowed_window_categories,
+                    disqualifying_window_categories=disqualifying_window_categories,
+                    enforce_allowed_window_categories=enforce_allowed,
+                    power_curve_arrays=power_curve_arrays,
+                    pr_threshold=pr_threshold,
+                    air_density_default=air_density_default,
+                    air_density_behavior=air_density_behavior,
+                    wind_col_hint=wind_col_hint,
+                    air_density_col_hint=air_density_col_hint
+                )
+            except MissingAirDensityError as ex:
+                return json.dumps({
+                    'success': False,
+                    'need_air_density_choice': True,
+                    'wtg': ex.wtg,
+                    'message': f"Air density column missing for {ex.wtg}. Provide a column name or allow default {air_density_default} kg/m^3.",
+                    'available_columns': ex.available_columns,
+                    'air_density_default': air_density_default
+                })
             
             if result.get('summary'):
                 summaries.append(result['summary'])
@@ -711,6 +907,16 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         output_excel_bytes = output_buffer.read()
         
         elapsed = round(time.time() - t0, 2)
+
+        preview = None
+        for sheet_df in data_sheets.values():
+            if isinstance(sheet_df, pd.DataFrame) and not sheet_df.empty:
+                preview_df = sheet_df.head(10)
+                preview = {
+                    'columns': preview_df.columns.tolist(),
+                    'rows': preview_df.where(pd.notna(preview_df), None).astype(object).values.tolist()
+                }
+                break
         
         return json.dumps({
             'success': True,
@@ -720,8 +926,64 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             'processing_time': elapsed,
             'wtgs': wtgs[:10],
             'alarms_processed': alarm_df is not None,
-            'alarm_events_total': sum(len(adf) for adf in alarm_sheets.values()) if alarm_sheets else 0
+            'alarm_events_total': sum(len(adf) for adf in alarm_sheets.values()) if alarm_sheets else 0,
+            'preview': preview
         })
+        
+    except MissingAirDensityError as ex:
+        return json.dumps({
+            'success': False,
+            'need_air_density_choice': True,
+            'wtg': ex.wtg,
+            'message': f"Air density column missing for {ex.wtg}. Provide a column name or allow default {params.get('air_density_default', 1.225)} kg/m^3.",
+            'available_columns': ex.available_columns,
+        })
+    except Exception as e:
+        import traceback
+        return json.dumps({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        })
+
+
+def run_browser_analysis_from_text(data_text: str, file_name: str, params: dict,
+                                   alarm_text: str = None, alarm_file_name: str = None) -> str:
+    """
+    Entry point for browser-based analysis using pasted text data.
+    Converts pasted text to bytes and delegates to run_browser_analysis.
+    
+    Parameters:
+    - data_text: SCADA data as pasted text (tab or comma separated)
+    - file_name: Virtual file name (used for format detection, should be .csv or .tsv)
+    - params: Dictionary of analysis parameters
+    - alarm_text: Optional alarm log as pasted text
+    - alarm_file_name: Optional alarm log virtual file name
+    """
+    try:
+        # Detect delimiter from the pasted text
+        first_line = data_text.split('\n')[0] if data_text else ''
+        if '\t' in first_line:
+            # Tab-separated (from Excel copy)
+            file_name = 'pasted_data.tsv'
+            data_bytes = data_text.encode('utf-8')
+        else:
+            # Comma-separated
+            file_name = 'pasted_data.csv'
+            data_bytes = data_text.encode('utf-8')
+        
+        # Handle alarm text similarly
+        alarm_bytes = None
+        if alarm_text and alarm_text.strip():
+            alarm_first_line = alarm_text.split('\n')[0] if alarm_text else ''
+            if '\t' in alarm_first_line:
+                alarm_file_name = 'pasted_alarms.tsv'
+            else:
+                alarm_file_name = 'pasted_alarms.csv'
+            alarm_bytes = alarm_text.encode('utf-8')
+        
+        # Delegate to the existing function
+        return run_browser_analysis(data_bytes, file_name, params, alarm_bytes, alarm_file_name)
         
     except Exception as e:
         import traceback
