@@ -968,9 +968,23 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 for col in preview_df.columns:
                     if pd.api.types.is_datetime64_any_dtype(preview_df[col]):
                         preview_df[col] = preview_df[col].astype(str)
+                # Convert to list, handling any remaining non-JSON-serializable types
+                rows_list = []
+                for _, row in preview_df.iterrows():
+                    row_data = []
+                    for val in row:
+                        if pd.isna(val):
+                            row_data.append(None)
+                        elif hasattr(val, 'isoformat'):  # Timestamp/datetime
+                            row_data.append(str(val))
+                        elif isinstance(val, (int, float, str, bool, type(None))):
+                            row_data.append(val)
+                        else:
+                            row_data.append(str(val))
+                    rows_list.append(row_data)
                 preview = {
                     'columns': preview_df.columns.tolist(),
-                    'rows': preview_df.where(pd.notna(preview_df), None).astype(object).values.tolist()
+                    'rows': rows_list
                 }
                 break
         

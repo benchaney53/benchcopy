@@ -6,6 +6,7 @@
     <title>Run Test Tool | Bench Tools</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="../../assets/sidebar.css">
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <style>
         :root {
             --card-bg: #3a3a3a;
@@ -220,6 +221,24 @@
         .preview-modal-table tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
         body.light-mode .preview-modal-table tr:nth-child(even) { background: rgba(0, 0, 0, 0.02); }
         .preview-modal-info { padding: 0.75rem 1rem; background: rgba(136, 176, 255, 0.1); border-bottom: 1px solid var(--border-color); font-size: 0.85rem; color: var(--text-color); }
+
+        .report-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.85); display: none; z-index: 3000; padding: 1rem; }
+        .report-modal.visible { display: flex; flex-direction: column; }
+        .report-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 1rem; background: var(--card-bg); border-bottom: 1px solid var(--border-color); border-radius: 10px 10px 0 0; }
+        .report-modal-title { font-size: 1.2rem; font-weight: 600; color: var(--text-color); }
+        .report-modal-close { background: none; border: none; color: var(--text-color); font-size: 1.5rem; cursor: pointer; opacity: 0.7; }
+        .report-modal-close:hover { opacity: 1; }
+        .report-tabs { display: flex; gap: 0; background: var(--card-bg); border-bottom: 1px solid var(--border-color); overflow-x: auto; padding: 0 1rem; }
+        .report-tab { padding: 0.75rem 1.25rem; background: none; border: none; color: var(--text-color); cursor: pointer; font-size: 0.9rem; border-bottom: 2px solid transparent; white-space: nowrap; opacity: 0.7; }
+        .report-tab:hover { opacity: 1; background: rgba(136, 176, 255, 0.1); }
+        .report-tab.active { border-bottom-color: var(--accent-color); opacity: 1; font-weight: 600; }
+        .report-body { flex: 1; overflow: auto; background: var(--card-bg); padding: 1rem; border-radius: 0 0 10px 10px; }
+        .report-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: monospace; }
+        .report-table th, .report-table td { border: 1px solid var(--border-color); padding: 6px 10px; text-align: left; white-space: nowrap; max-width: 400px; overflow: hidden; text-overflow: ellipsis; }
+        .report-table th { background: rgba(136, 176, 255, 0.15); position: sticky; top: 0; font-weight: 600; z-index: 10; }
+        body.light-mode .report-table th { background: #e8f0fe; }
+        .report-table tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
+        body.light-mode .report-table tr:nth-child(even) { background: rgba(0, 0, 0, 0.02); }
     </style>
 </head>
 <body>
@@ -489,10 +508,23 @@
         <div id="results-content"></div>
         <div id="preview-container"></div>
         <div class="download-section">
+            <button class="btn btn-primary" id="view-report-btn" style="display: none;">
+                <i class="fa-solid fa-eye"></i> View Report
+            </button>
             <button class="btn btn-primary" id="download-btn" style="display: none;">
                 <i class="fa-solid fa-download"></i> Download Excel Report
             </button>
         </div>
+    </div>
+
+    <!-- Report Viewer Modal -->
+    <div class="report-modal" id="report-modal">
+        <div class="report-modal-header">
+            <span class="report-modal-title"><i class="fa-solid fa-file-excel"></i> Excel Report Viewer</span>
+            <button class="report-modal-close" onclick="closeReportModal()">&times;</button>
+        </div>
+        <div class="report-tabs" id="report-tabs"></div>
+        <div class="report-body" id="report-body"></div>
     </div>
 
     <script src="../../assets/sidebar.js"></script>
@@ -669,6 +701,7 @@
         const resultsContent = document.getElementById('results-content');
         const previewContainer = document.getElementById('preview-container');
         const downloadBtn = document.getElementById('download-btn');
+        const viewReportBtn = document.getElementById('view-report-btn');
         const loadingOverlay = document.getElementById('pyodide-loading');
         const airDensityBehaviorEl = document.getElementById('air-density-behavior');
         const airDensityDefaultEl = document.getElementById('air-density-default');
@@ -818,10 +851,16 @@
 
         // Close modal on escape key or clicking outside
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closePreviewModal();
+            if (e.key === 'Escape') {
+                closePreviewModal();
+                closeReportModal();
+            }
         });
         document.getElementById('preview-modal').addEventListener('click', (e) => {
             if (e.target.id === 'preview-modal') closePreviewModal();
+        });
+        document.getElementById('report-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'report-modal') closeReportModal();
         });
 
         async function initPyodide() {
@@ -943,7 +982,8 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                     if (outputBytes) {
                         outputBlob = new Blob([outputBytes.toJs()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                         downloadBtn.style.display = 'block';
-                        log('Excel report ready for download', 'success');
+                        viewReportBtn.style.display = 'block';
+                        log('Excel report ready for download or viewing', 'success');
                     }
                 } else {
                     if (resultObj.need_air_density_choice && allowRetry) {
@@ -1042,6 +1082,85 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             URL.revokeObjectURL(url);
             log('Downloaded: Run_Test_Windows.xlsx', 'success');
         });
+
+        let reportWorkbook = null;
+
+        viewReportBtn.addEventListener('click', async () => {
+            if (!outputBlob) return;
+            try {
+                const arrayBuffer = await outputBlob.arrayBuffer();
+                reportWorkbook = XLSX.read(arrayBuffer, { type: 'array' });
+                showReportModal();
+            } catch (e) {
+                log('Error parsing Excel file: ' + e.message, 'error');
+            }
+        });
+
+        function showReportModal() {
+            if (!reportWorkbook) return;
+            const modal = document.getElementById('report-modal');
+            const tabsContainer = document.getElementById('report-tabs');
+            const bodyContainer = document.getElementById('report-body');
+            
+            // Build tabs
+            tabsContainer.innerHTML = '';
+            reportWorkbook.SheetNames.forEach((name, idx) => {
+                const tab = document.createElement('button');
+                tab.className = 'report-tab' + (idx === 0 ? ' active' : '');
+                tab.textContent = name;
+                tab.onclick = () => showReportSheet(name);
+                tabsContainer.appendChild(tab);
+            });
+            
+            // Show first sheet
+            if (reportWorkbook.SheetNames.length > 0) {
+                showReportSheet(reportWorkbook.SheetNames[0]);
+            }
+            
+            modal.classList.add('visible');
+        }
+
+        function showReportSheet(sheetName) {
+            const bodyContainer = document.getElementById('report-body');
+            const tabsContainer = document.getElementById('report-tabs');
+            
+            // Update active tab
+            Array.from(tabsContainer.children).forEach(tab => {
+                tab.classList.toggle('active', tab.textContent === sheetName);
+            });
+            
+            const sheet = reportWorkbook.Sheets[sheetName];
+            const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+            
+            if (data.length === 0) {
+                bodyContainer.innerHTML = '<p style="color: var(--text-color); padding: 1rem;">This sheet is empty.</p>';
+                return;
+            }
+            
+            let html = '<table class="report-table"><thead><tr>';
+            const headers = data[0] || [];
+            headers.forEach(h => {
+                html += `<th title="${escapeHtml(String(h))}">${escapeHtml(String(h))}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+            
+            for (let i = 1; i < data.length; i++) {
+                html += '<tr>';
+                const row = data[i] || [];
+                for (let j = 0; j < headers.length; j++) {
+                    const val = row[j] !== undefined ? row[j] : '';
+                    html += `<td title="${escapeHtml(String(val))}">${escapeHtml(String(val))}</td>`;
+                }
+                html += '</tr>';
+            }
+            html += '</tbody></table>';
+            
+            bodyContainer.innerHTML = html;
+        }
+
+        function closeReportModal() {
+            document.getElementById('report-modal').classList.remove('visible');
+        }
 
         window.addEventListener('DOMContentLoaded', () => {
             loadSettings();
