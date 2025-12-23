@@ -211,7 +211,7 @@
         .preview-modal-body { overflow: auto; padding: 1rem; max-height: calc(90vh - 60px); }
         .preview-modal-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: monospace; }
         .preview-modal-table th, .preview-modal-table td { border: 1px solid var(--border-color); padding: 6px 10px; text-align: left; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
-        .preview-modal-table th { background: rgba(136, 176, 255, 0.15); position: sticky; top: 0; font-weight: 600; }
+        .preview-modal-table th { background: rgba(136, 176, 255, 0.15); position: sticky; top: 0; font-weight: 600; z-index: 10; box-shadow: 0 1px 0 var(--border-color); }
         body.light-mode .preview-modal-table th { background: #e8f0fe; }
         .preview-modal-table tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
         body.light-mode .preview-modal-table tr:nth-child(even) { background: rgba(0, 0, 0, 0.02); }
@@ -304,45 +304,21 @@
                 </div>
             </div>
         </div>
-    </div>
 
-    <div class="card">
-        <div class="card-header">
-            <div class="card-icon"><i class="fa-solid fa-bolt"></i></div>
-            <span class="card-title">Power Curve & Columns</span>
-        </div>
-        <div class="form-group">
-            <label>Power Curve (paste WS rows, air density columns)</label>
-            <textarea id="power-curve-text" placeholder="WS [m/s] 1.225 0.950 0.975 1.000 ...
-3.0 81 51 54 ..."></textarea>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>Air Density Column (preferred)</label>
-                <input type="text" id="air-density-col-hint" placeholder="e.g., WTG01_Ambient Airdensity AirDensityAvg Avg">
+        <div class="card" style="margin-bottom: 0;">
+            <div class="card-header">
+                <div class="card-icon"><i class="fa-solid fa-bolt"></i></div>
+                <span class="card-title">Power Curve</span>
             </div>
-            <div class="form-group">
-                <label>Wind Speed Column</label>
-                <input type="text" id="wind-col-hint" placeholder="e.g., WTG01_Wind speed, Average">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Paste Power Curve table (wind speed rows, air density columns)</label>
+                <textarea id="power-curve-text" placeholder="Paste power curve here...&#10;&#10;Example:&#10;WS [m/s]&#9;1.225&#9;0.950&#9;0.975&#9;1.000&#10;3.0&#9;81&#9;51&#9;54&#9;57&#10;3.5&#9;167&#9;107&#9;113&#9;119" style="min-height: 200px; font-family: monospace; font-size: 12px;"></textarea>
+                <div class="upload-hint" style="margin-top: 0.5rem;"><i class="fa-solid fa-circle-info"></i> First column = wind speed, first row = air density values. Used for expected power calculation.</div>
+                <div class="data-actions">
+                    <div class="data-status" id="power-curve-status" style="font-size: 0.85rem;"></div>
+                    <button class="btn-preview" id="power-curve-preview-btn" disabled onclick="showPreview('powercurve')"><i class="fa-solid fa-table"></i> Preview</button>
+                </div>
             </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>Air Density When Missing</label>
-                <select id="air-density-behavior">
-                    <option value="prompt" selected>Ask to supply column or default</option>
-                    <option value="default">Use default automatically</option>
-                    <option value="fail">Fail if missing</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label>Default Air Density (kg/m³)</label>
-                <input type="number" id="air-density-default" value="1.225" min="0" step="0.001">
-            </div>
-        </div>
-        <div class="form-group">
-            <label>Performance Ratio Threshold</label>
-            <input type="number" id="pr-threshold" value="0.97" min="0" max="2" step="0.01">
         </div>
     </div>
 
@@ -398,6 +374,20 @@
                     <option value="yes">Yes</option>
                     <option value="no">No</option>
                 </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Air Density When Missing</label>
+                <select id="air-density-behavior">
+                    <option value="default" selected>Use default automatically</option>
+                    <option value="prompt">Ask to supply column or default</option>
+                    <option value="fail">Fail if missing</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Default Air Density (kg/m³)</label>
+                <input type="number" id="air-density-default" value="1.225" min="0" step="0.001">
             </div>
         </div>
 
@@ -514,10 +504,78 @@
         let pyodide = null;
         let outputBlob = null;
 
+        // Settings persistence - list of form element IDs to save/load
+        const SETTINGS_KEY = 'runTestToolSettings';
+        const SAVED_SETTINGS_IDS = [
+            'mode', 'rated-power', 'test-hours', 'extension-hours',
+            'min-availability', 'nominal-threshold', 'energy-source',
+            'enforce-allowed-window', 'air-density-behavior', 'air-density-default',
+            'bin-minutes', 'allowed-categories', 'disallowed-categories',
+            'active-base-categories', 'allowed-window-categories',
+            'disqualifying-window-categories', 'wtg-separators',
+            'alarms-keep-event-types', 'alarms-min-severity',
+            'power-curve-text'
+        ];
+
+        function saveSettings() {
+            const settings = {};
+            SAVED_SETTINGS_IDS.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) settings[id] = el.value;
+            });
+            try {
+                localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+            } catch (e) {
+                console.warn('Could not save settings:', e);
+            }
+        }
+
+        function loadSettings() {
+            try {
+                const saved = localStorage.getItem(SETTINGS_KEY);
+                if (!saved) return;
+                const settings = JSON.parse(saved);
+                SAVED_SETTINGS_IDS.forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el && settings[id] !== undefined) {
+                        el.value = settings[id];
+                    }
+                });
+                // Update status displays for power curve if it was loaded
+                const pcEl = document.getElementById('power-curve-text');
+                const pcStatus = document.getElementById('power-curve-status');
+                if (pcEl && pcEl.value.trim()) {
+                    const lines = pcEl.value.split('\n').filter(l => l.trim());
+                    const firstLine = lines[0] || '';
+                    const delimiter = firstLine.includes('\t') ? '\t' : ',';
+                    const cols = firstLine.split(delimiter).length;
+                    pcStatus.textContent = `${lines.length} rows, ${cols} columns detected`;
+                    pcStatus.classList.add('has-data');
+                }
+                console.log('Settings loaded from localStorage');
+            } catch (e) {
+                console.warn('Could not load settings:', e);
+            }
+        }
+
+        function attachSettingsListeners() {
+            SAVED_SETTINGS_IDS.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener('change', saveSettings);
+                    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                        el.addEventListener('input', saveSettings);
+                    }
+                }
+            });
+        }
+
         const scadaDataInput = document.getElementById('scada-data-input');
         const scadaDataStatus = document.getElementById('scada-data-status');
         const alarmDataInput = document.getElementById('alarm-data-input');
         const alarmDataStatus = document.getElementById('alarm-data-status');
+        const powerCurveInput = document.getElementById('power-curve-text');
+        const powerCurveStatus = document.getElementById('power-curve-status');
         const runBtn = document.getElementById('run-btn');
         const consoleEl = document.getElementById('console');
         const statusContainer = document.getElementById('status-container');
@@ -529,12 +587,8 @@
         const previewContainer = document.getElementById('preview-container');
         const downloadBtn = document.getElementById('download-btn');
         const loadingOverlay = document.getElementById('pyodide-loading');
-        const powerCurveTextEl = document.getElementById('power-curve-text');
-        const airDensityColHintEl = document.getElementById('air-density-col-hint');
-        const windColHintEl = document.getElementById('wind-col-hint');
         const airDensityBehaviorEl = document.getElementById('air-density-behavior');
         const airDensityDefaultEl = document.getElementById('air-density-default');
-        const prThresholdEl = document.getElementById('pr-threshold');
 
         function log(message, type = '') {
             const line = document.createElement('div');
@@ -577,6 +631,7 @@
             // Also enable/disable preview buttons
             document.getElementById('scada-preview-btn').disabled = !scadaHasData;
             document.getElementById('alarm-preview-btn').disabled = !alarmDataInput.value.trim();
+            document.getElementById('power-curve-preview-btn').disabled = !powerCurveInput.value.trim();
         }
 
         scadaDataInput.addEventListener('input', () => {
@@ -595,6 +650,15 @@
             checkRunEnabled();
         });
 
+        powerCurveInput.addEventListener('input', () => {
+            const result = updateDataStatus(powerCurveInput, powerCurveStatus, 'Power Curve');
+            if (result.hasData) {
+                log(`Power curve pasted: ${result.rows} rows, ${result.cols} columns`, 'success');
+            }
+            checkRunEnabled();
+            saveSettings();
+        });
+
         function parseTextToTable(text) {
             const lines = text.split('\n').filter(l => l.trim());
             if (lines.length === 0) return { headers: [], rows: [] };
@@ -606,8 +670,17 @@
         }
 
         function showPreview(type) {
-            const textarea = type === 'scada' ? scadaDataInput : alarmDataInput;
-            const title = type === 'scada' ? 'SCADA Data Preview' : 'Alarm Log Preview';
+            let textarea, title;
+            if (type === 'scada') {
+                textarea = scadaDataInput;
+                title = 'SCADA Data Preview';
+            } else if (type === 'alarm') {
+                textarea = alarmDataInput;
+                title = 'Alarm Log Preview';
+            } else if (type === 'powercurve') {
+                textarea = powerCurveInput;
+                title = 'Power Curve Preview';
+            }
             const text = textarea.value.trim();
             if (!text) return;
 
@@ -736,13 +809,14 @@
                     pyodide.globals.set('alarm_file_name', null);
                 }
                 const minSeverityVal = document.getElementById('alarms-min-severity').value;
+                const nominalThreshold = parseFloat(document.getElementById('nominal-threshold').value);
                 const params = {
                     mode: document.getElementById('mode').value,
                     rated_power_kw: parseFloat(document.getElementById('rated-power').value),
                     test_hours: parseInt(document.getElementById('test-hours').value),
                     extension_hours: parseInt(document.getElementById('extension-hours').value),
                     min_availability_pct: parseFloat(document.getElementById('min-availability').value),
-                    nominal_threshold_pct: parseFloat(document.getElementById('nominal-threshold').value),
+                    nominal_threshold_pct: nominalThreshold,
                     bin_minutes: document.getElementById('bin-minutes').value || null,
                     energy_source: document.getElementById('energy-source').value,
                     no_enforce_allowed_window: document.getElementById('enforce-allowed-window').value === 'no',
@@ -754,12 +828,14 @@
                     wtg_separators: document.getElementById('wtg-separators').value,
                     alarms_keep_event_types: document.getElementById('alarms-keep-event-types').value,
                     alarms_min_severity: minSeverityVal ? parseInt(minSeverityVal) : null,
-                    power_curve_text: powerCurveTextEl.value,
-                    air_density_column_hint: airDensityColHintEl.value.trim() || null,
-                    wind_speed_column_hint: windColHintEl.value.trim() || null,
+                    power_curve_text: powerCurveInput.value.trim() || null,
+                    // Hardcoded column patterns - will search for columns containing these strings
+                    air_density_column_hint: 'Ambient Airdensity AirDensityAvg',
+                    wind_speed_column_hint: 'Ambient WindSpeed Avg',
+                    // PR threshold derived from nominal threshold (e.g., 99% -> 0.99)
+                    pr_threshold: nominalThreshold / 100.0,
                     air_density_behavior: airDensityBehaviorEl.value,
-                    air_density_default: parseFloat(airDensityDefaultEl.value) || 1.225,
-                    pr_threshold: parseFloat(prThresholdEl.value) || 0.97
+                    air_density_default: parseFloat(airDensityDefaultEl.value) || 1.225
                 };
                 Object.assign(params, overrides);
                 pyodide.globals.set('params', pyodide.toPy(params));
@@ -882,7 +958,11 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             log('Downloaded: Run_Test_Windows.xlsx', 'success');
         });
 
-        window.addEventListener('DOMContentLoaded', initPyodide);
+        window.addEventListener('DOMContentLoaded', () => {
+            loadSettings();
+            attachSettingsListeners();
+            initPyodide();
+        });
     </script>
 </body>
 </html>
