@@ -439,6 +439,9 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
     
     avg_pr = float(np.nanmean(slice_df['_PerformanceRatio'])) if '_PerformanceRatio' in slice_df.columns else float('nan')
 
+    # Filter out nan/empty from categories list
+    cats_list = [c for c in sorted(cats_norm.unique().tolist()) if c and c.lower() != 'nan']
+
     summary = {
         'WTG': wtg,
         'Rated Power (kW)': rated_power_kw,
@@ -456,7 +459,7 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
         'Energy Power Column Used': energy_power_col,
         'State Column': state_col,
         'Category Column': cat_col,
-        'Window Categories Seen': ','.join(sorted(cats_norm.unique().tolist())),
+        'Window Categories Seen': ','.join(cats_list),
         'Average Performance Ratio': round(avg_pr, 3) if np.isfinite(avg_pr) else float('nan'),
         'PR Threshold Used': pr_threshold,
         'Air Density Source': air_density_source,
@@ -660,7 +663,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     
     # Diagnostic info for failures
     def build_diagnostic_info():
-        cats_unique = sorted(cats_norm_full.unique().tolist())
+        cats_unique = [c for c in sorted(cats_norm_full.unique().tolist()) if c and c.lower() != 'nan']
         total_rows = len(d)
         total_active = int(active_full.sum())
         total_hours = total_rows * bin_minutes / 60.0
@@ -713,7 +716,17 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                                              s_idx, e_idx, rated_power_kw, bin_minutes,
                                              nominal_threshold_pct, blocked_set, active_base_set,
                                              energy_power_col, pr_threshold, air_density_source)
+    # Determine status based on 24h subwindow achievement
+    if chosen['contains_3x']:
+        status = 'PASSED (3x floor achieved)'
+    elif chosen['contains_1x']:
+        status = 'PASSED (1x floor achieved)'
+    else:
+        status = 'PASSED'
+    
     summ.update({'Mode': mode,
+                 'Status': status,
+                 'Nominal 24h Achieved': bool(chosen['contains_3x'] or chosen['contains_1x']),
                  'Contains 24h subwindow >= 3x floor': bool(chosen['contains_3x']),
                  'Contains 24h subwindow >= 1x floor': bool(chosen['contains_1x'])})
     return {'wtg': wtg, 'summary': summ, 'data_slice': slice_df}

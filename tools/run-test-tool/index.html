@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="../../assets/sidebar.css">
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
             --card-bg: #3a3a3a;
@@ -239,6 +240,16 @@
         body.light-mode .report-table th { background: #e8f0fe; }
         .report-table tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
         body.light-mode .report-table tr:nth-child(even) { background: rgba(0, 0, 0, 0.02); }
+
+        .charts-container { display: flex; flex-direction: column; gap: 2rem; padding: 1rem 0; }
+        .chart-wrapper { background: rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 1rem; }
+        body.light-mode .chart-wrapper { background: rgba(0, 0, 0, 0.03); }
+        .chart-title { font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--text-color); }
+        .chart-canvas-container { position: relative; height: 300px; }
+        .wtg-chart-selector { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+        .wtg-chart-btn { padding: 0.5rem 1rem; background: rgba(136, 176, 255, 0.2); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); cursor: pointer; font-size: 0.85rem; }
+        .wtg-chart-btn:hover { background: rgba(136, 176, 255, 0.3); }
+        .wtg-chart-btn.active { background: var(--accent-color); color: #000; font-weight: 600; }
     </style>
 </head>
 <body>
@@ -1102,8 +1113,17 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             const tabsContainer = document.getElementById('report-tabs');
             const bodyContainer = document.getElementById('report-body');
             
-            // Build tabs
+            // Build tabs - add Charts tab first
             tabsContainer.innerHTML = '';
+            
+            // Add Charts tab
+            const chartsTab = document.createElement('button');
+            chartsTab.className = 'report-tab';
+            chartsTab.textContent = 'Charts';
+            chartsTab.onclick = () => showChartsView();
+            tabsContainer.appendChild(chartsTab);
+            
+            // Add sheet tabs
             reportWorkbook.SheetNames.forEach((name, idx) => {
                 const tab = document.createElement('button');
                 tab.className = 'report-tab' + (idx === 0 ? ' active' : '');
@@ -1128,6 +1148,12 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             Array.from(tabsContainer.children).forEach(tab => {
                 tab.classList.toggle('active', tab.textContent === sheetName);
             });
+            
+            // Destroy any existing charts
+            if (window.activeCharts) {
+                window.activeCharts.forEach(c => c.destroy());
+                window.activeCharts = [];
+            }
             
             const sheet = reportWorkbook.Sheets[sheetName];
             const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
@@ -1159,7 +1185,197 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
         }
 
         function closeReportModal() {
+            // Destroy charts when closing
+            if (window.activeCharts) {
+                window.activeCharts.forEach(c => c.destroy());
+                window.activeCharts = [];
+            }
             document.getElementById('report-modal').classList.remove('visible');
+        }
+
+        window.activeCharts = [];
+        let currentChartWTG = null;
+
+        function showChartsView() {
+            const bodyContainer = document.getElementById('report-body');
+            const tabsContainer = document.getElementById('report-tabs');
+            
+            // Update active tab
+            Array.from(tabsContainer.children).forEach(tab => {
+                tab.classList.toggle('active', tab.textContent === 'Charts');
+            });
+            
+            // Destroy existing charts
+            if (window.activeCharts) {
+                window.activeCharts.forEach(c => c.destroy());
+                window.activeCharts = [];
+            }
+            
+            // Find WTG data sheets (sheets ending with _Data)
+            const dataSheets = reportWorkbook.SheetNames.filter(n => n.endsWith('_Data'));
+            
+            if (dataSheets.length === 0) {
+                bodyContainer.innerHTML = '<p style="color: var(--text-color); padding: 1rem;">No WTG data sheets found. Run analysis first.</p>';
+                return;
+            }
+            
+            // Build UI with WTG selector buttons
+            let html = '<div class="wtg-chart-selector" id="wtg-chart-selector">';
+            dataSheets.forEach((name, idx) => {
+                const wtgName = name.replace('_Data', '');
+                html += `<button class="wtg-chart-btn${idx === 0 ? ' active' : ''}" data-sheet="${name}" onclick="renderWTGChart('${name}')">${wtgName}</button>`;
+            });
+            html += '</div>';
+            html += '<div class="chart-wrapper"><div class="chart-title" id="chart-title">Select a WTG</div><div class="chart-canvas-container"><canvas id="power-chart"></canvas></div></div>';
+            
+            bodyContainer.innerHTML = html;
+            
+            // Render first WTG chart
+            if (dataSheets.length > 0) {
+                renderWTGChart(dataSheets[0]);
+            }
+        }
+
+        function renderWTGChart(sheetName) {
+            const wtgName = sheetName.replace('_Data', '');
+            currentChartWTG = sheetName;
+            
+            // Update button states
+            document.querySelectorAll('.wtg-chart-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.sheet === sheetName);
+            });
+            
+            // Destroy existing chart
+            if (window.activeCharts) {
+                window.activeCharts.forEach(c => c.destroy());
+                window.activeCharts = [];
+            }
+            
+            document.getElementById('chart-title').textContent = `${wtgName} - Expected Power vs Actual Power`;
+            
+            const sheet = reportWorkbook.Sheets[sheetName];
+            const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+            
+            if (data.length < 2) {
+                return;
+            }
+            
+            const headers = data[0];
+            const tsIdx = headers.findIndex(h => String(h).toLowerCase().includes('timestamp') || String(h).toLowerCase() === 'pctimestamp');
+            const powerIdx = headers.findIndex(h => String(h).toLowerCase().includes('power avg') || String(h).toLowerCase().includes('production power'));
+            const expectedIdx = headers.findIndex(h => String(h).toLowerCase().includes('expectedpower') || String(h) === '_ExpectedPower');
+            
+            if (tsIdx === -1 || powerIdx === -1) {
+                document.getElementById('chart-title').textContent = `${wtgName} - Could not find required columns`;
+                return;
+            }
+            
+            const labels = [];
+            const actualPower = [];
+            const expectedPower = [];
+            
+            for (let i = 1; i < data.length; i++) {
+                const row = data[i];
+                let ts = row[tsIdx];
+                
+                // Format timestamp for display
+                if (ts) {
+                    if (typeof ts === 'number') {
+                        // Excel serial date
+                        const date = new Date((ts - 25569) * 86400 * 1000);
+                        ts = date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    } else {
+                        ts = String(ts).substring(0, 16);
+                    }
+                }
+                
+                labels.push(ts || '');
+                actualPower.push(parseFloat(row[powerIdx]) || null);
+                if (expectedIdx !== -1) {
+                    expectedPower.push(parseFloat(row[expectedIdx]) || null);
+                }
+            }
+            
+            const ctx = document.getElementById('power-chart').getContext('2d');
+            const isDark = !document.body.classList.contains('light-mode');
+            const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+            const textColor = isDark ? '#e0e0e0' : '#333';
+            
+            const datasets = [
+                {
+                    label: 'Actual Power (kW)',
+                    data: actualPower,
+                    borderColor: '#4CAF50',
+                    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    tension: 0.1
+                }
+            ];
+            
+            if (expectedPower.length > 0 && expectedIdx !== -1) {
+                datasets.push({
+                    label: 'Expected Power (kW)',
+                    data: expectedPower,
+                    borderColor: '#FF9800',
+                    backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    tension: 0.1
+                });
+            }
+            
+            const chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: textColor }
+                        },
+                        tooltip: {
+                            backgroundColor: isDark ? '#2a2a2a' : '#fff',
+                            titleColor: textColor,
+                            bodyColor: textColor,
+                            borderColor: isDark ? '#555' : '#ddd',
+                            borderWidth: 1
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                color: textColor,
+                                maxTicksLimit: 20,
+                                maxRotation: 45,
+                                minRotation: 45
+                            },
+                            grid: { color: gridColor }
+                        },
+                        y: {
+                            ticks: { color: textColor },
+                            grid: { color: gridColor },
+                            title: {
+                                display: true,
+                                text: 'Power (kW)',
+                                color: textColor
+                            }
+                        }
+                    }
+                }
+            });
+            
+            window.activeCharts = [chart];
         }
 
         window.addEventListener('DOMContentLoaded', () => {
