@@ -194,11 +194,15 @@
         .data-status.has-data::before { content: '✓ '; }
 
         .data-actions { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem; }
-        .btn-preview { display: inline-flex; align-items: center; gap: 0.4rem; padding: 6px 12px; background: #4a4a4a; color: #e0e0e0; border: 1px solid var(--border-color); border-radius: 4px; font-size: 0.8rem; cursor: pointer; transition: all 0.2s; }
-        .btn-preview:hover { background: #5a5a5a; }
-        .btn-preview:disabled { opacity: 0.5; cursor: not-allowed; }
-        body.light-mode .btn-preview { background: #f0f0f0; color: #333; }
-        body.light-mode .btn-preview:hover { background: #e0e0e0; }
+        .btn-preview, .btn-clear { display: inline-flex; align-items: center; gap: 0.4rem; padding: 6px 12px; background: #4a4a4a; color: #e0e0e0; border: 1px solid var(--border-color); border-radius: 4px; font-size: 0.8rem; cursor: pointer; transition: all 0.2s; }
+        .btn-preview:hover, .btn-clear:hover { background: #5a5a5a; }
+        .btn-preview:disabled, .btn-clear:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-clear { background: #5a3a3a; }
+        .btn-clear:hover { background: #6a4a4a; }
+        body.light-mode .btn-preview, body.light-mode .btn-clear { background: #f0f0f0; color: #333; }
+        body.light-mode .btn-preview:hover, body.light-mode .btn-clear:hover { background: #e0e0e0; }
+        body.light-mode .btn-clear { background: #ffe0e0; }
+        body.light-mode .btn-clear:hover { background: #ffd0d0; }
 
         .preview-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.8); display: none; align-items: center; justify-content: center; z-index: 2000; padding: 2rem; }
         .preview-modal.visible { display: flex; }
@@ -285,6 +289,7 @@
                 <div class="data-actions">
                     <div class="data-status" id="scada-data-status" style="font-size: 0.85rem;"></div>
                     <button class="btn-preview" id="scada-preview-btn" disabled onclick="showPreview('scada')"><i class="fa-solid fa-table"></i> Preview</button>
+                    <button class="btn-clear" id="scada-clear-btn" onclick="clearDataInput('scada')"><i class="fa-solid fa-xmark"></i> Clear</button>
                 </div>
             </div>
         </div>
@@ -301,6 +306,7 @@
                 <div class="data-actions">
                     <div class="data-status" id="alarm-data-status" style="font-size: 0.85rem;"></div>
                     <button class="btn-preview" id="alarm-preview-btn" disabled onclick="showPreview('alarm')"><i class="fa-solid fa-table"></i> Preview</button>
+                    <button class="btn-clear" id="alarm-clear-btn" onclick="clearDataInput('alarm')"><i class="fa-solid fa-xmark"></i> Clear</button>
                 </div>
             </div>
         </div>
@@ -317,6 +323,7 @@
                 <div class="data-actions">
                     <div class="data-status" id="power-curve-status" style="font-size: 0.85rem;"></div>
                     <button class="btn-preview" id="power-curve-preview-btn" disabled onclick="showPreview('powercurve')"><i class="fa-solid fa-table"></i> Preview</button>
+                    <button class="btn-clear" id="power-curve-clear-btn" onclick="clearDataInput('powercurve')"><i class="fa-solid fa-xmark"></i> Clear</button>
                 </div>
             </div>
         </div>
@@ -506,6 +513,8 @@
 
         // Settings persistence - list of form element IDs to save/load
         const SETTINGS_KEY = 'runTestToolSettings';
+        const SCADA_DATA_KEY = 'runTestToolScadaData';
+        const ALARM_DATA_KEY = 'runTestToolAlarmData';
         const SAVED_SETTINGS_IDS = [
             'mode', 'rated-power', 'test-hours', 'extension-hours',
             'min-availability', 'nominal-threshold', 'energy-source',
@@ -530,32 +539,106 @@
             }
         }
 
+        function saveScadaData() {
+            try {
+                const data = document.getElementById('scada-data-input').value;
+                if (data.trim()) {
+                    localStorage.setItem(SCADA_DATA_KEY, data);
+                } else {
+                    localStorage.removeItem(SCADA_DATA_KEY);
+                }
+            } catch (e) {
+                console.warn('Could not save SCADA data:', e);
+            }
+        }
+
+        function saveAlarmData() {
+            try {
+                const data = document.getElementById('alarm-data-input').value;
+                if (data.trim()) {
+                    localStorage.setItem(ALARM_DATA_KEY, data);
+                } else {
+                    localStorage.removeItem(ALARM_DATA_KEY);
+                }
+            } catch (e) {
+                console.warn('Could not save Alarm data:', e);
+            }
+        }
+
+        function clearDataInput(type) {
+            if (type === 'scada') {
+                document.getElementById('scada-data-input').value = '';
+                document.getElementById('scada-data-status').textContent = '';
+                document.getElementById('scada-data-status').classList.remove('has-data');
+                localStorage.removeItem(SCADA_DATA_KEY);
+                log('SCADA data cleared', 'info');
+            } else if (type === 'alarm') {
+                document.getElementById('alarm-data-input').value = '';
+                document.getElementById('alarm-data-status').textContent = '';
+                document.getElementById('alarm-data-status').classList.remove('has-data');
+                localStorage.removeItem(ALARM_DATA_KEY);
+                log('Alarm data cleared', 'info');
+            } else if (type === 'powercurve') {
+                document.getElementById('power-curve-text').value = '';
+                document.getElementById('power-curve-status').textContent = '';
+                document.getElementById('power-curve-status').classList.remove('has-data');
+                saveSettings(); // Power curve is in settings
+                log('Power curve cleared', 'info');
+            }
+            checkRunEnabled();
+        }
+
         function loadSettings() {
             try {
                 const saved = localStorage.getItem(SETTINGS_KEY);
-                if (!saved) return;
-                const settings = JSON.parse(saved);
-                SAVED_SETTINGS_IDS.forEach(id => {
-                    const el = document.getElementById(id);
-                    if (el && settings[id] !== undefined) {
-                        el.value = settings[id];
-                    }
-                });
+                if (saved) {
+                    const settings = JSON.parse(saved);
+                    SAVED_SETTINGS_IDS.forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el && settings[id] !== undefined) {
+                            el.value = settings[id];
+                        }
+                    });
+                }
+                // Load SCADA data
+                const scadaData = localStorage.getItem(SCADA_DATA_KEY);
+                if (scadaData) {
+                    const scadaEl = document.getElementById('scada-data-input');
+                    scadaEl.value = scadaData;
+                    updateDataStatusFromText(scadaEl, document.getElementById('scada-data-status'));
+                }
+                // Load Alarm data
+                const alarmData = localStorage.getItem(ALARM_DATA_KEY);
+                if (alarmData) {
+                    const alarmEl = document.getElementById('alarm-data-input');
+                    alarmEl.value = alarmData;
+                    updateDataStatusFromText(alarmEl, document.getElementById('alarm-data-status'));
+                }
                 // Update status displays for power curve if it was loaded
                 const pcEl = document.getElementById('power-curve-text');
                 const pcStatus = document.getElementById('power-curve-status');
                 if (pcEl && pcEl.value.trim()) {
-                    const lines = pcEl.value.split('\n').filter(l => l.trim());
-                    const firstLine = lines[0] || '';
-                    const delimiter = firstLine.includes('\t') ? '\t' : ',';
-                    const cols = firstLine.split(delimiter).length;
-                    pcStatus.textContent = `${lines.length} rows, ${cols} columns detected`;
-                    pcStatus.classList.add('has-data');
+                    updateDataStatusFromText(pcEl, pcStatus);
                 }
                 console.log('Settings loaded from localStorage');
             } catch (e) {
                 console.warn('Could not load settings:', e);
             }
+        }
+
+        function updateDataStatusFromText(textarea, statusEl) {
+            const text = textarea.value.trim();
+            if (!text) {
+                statusEl.textContent = '';
+                statusEl.classList.remove('has-data');
+                return;
+            }
+            const lines = text.split('\n').filter(l => l.trim());
+            const firstLine = lines[0] || '';
+            const delimiter = firstLine.includes('\t') ? '\t' : ',';
+            const cols = firstLine.split(delimiter).length;
+            statusEl.textContent = `${lines.length} rows, ${cols} columns detected`;
+            statusEl.classList.add('has-data');
         }
 
         function attachSettingsListeners() {
@@ -639,6 +722,7 @@
             if (result.hasData) {
                 log(`SCADA data pasted: ${result.rows} rows, ${result.cols} columns`, 'success');
             }
+            saveScadaData();
             checkRunEnabled();
         });
 
@@ -647,6 +731,7 @@
             if (result.hasData) {
                 log(`Alarm data pasted: ${result.rows} rows, ${result.cols} columns`, 'success');
             }
+            saveAlarmData();
             checkRunEnabled();
         });
 
