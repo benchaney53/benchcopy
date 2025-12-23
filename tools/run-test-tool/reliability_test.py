@@ -963,7 +963,11 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         preview = None
         for sheet_df in data_sheets.values():
             if isinstance(sheet_df, pd.DataFrame) and not sheet_df.empty:
-                preview_df = sheet_df.head(10)
+                preview_df = sheet_df.head(10).copy()
+                # Convert any Timestamp columns to strings for JSON serialization
+                for col in preview_df.columns:
+                    if pd.api.types.is_datetime64_any_dtype(preview_df[col]):
+                        preview_df[col] = preview_df[col].astype(str)
                 preview = {
                     'columns': preview_df.columns.tolist(),
                     'rows': preview_df.where(pd.notna(preview_df), None).astype(object).values.tolist()
