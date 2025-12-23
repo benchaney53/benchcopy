@@ -570,16 +570,24 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         return ps[e] - (ps[s-1] if s > 0 else 0)
     
     def best_by_priority_active(target_active_bins: int, req_mwh_1x: float, req_mwh_3x: float):
+        """
+        Find the BEST window with exactly target_active_bins active samples.
+        Evaluates ALL valid candidates and returns the one with:
+        1. Best PR tier (3x > 1x > none)
+        2. Shortest wall-clock duration (fewer total bins)
+        3. Earliest start time (as tiebreaker)
+        """
         N = len(d)
         s = 0
         e = -1
         active_acc = 0
-        best = None
         target_bins_24h = int(round(24 * 60 / bin_minutes))
         
-        # Use larger step size for initial scan, then refine
-        step = max(1, int(6 * 60 / bin_minutes))  # 6-hour steps for initial scan
-        candidates = []
+        # Collect ALL valid candidates
+        all_candidates = []
+        
+        # Use smaller step size to find more candidates
+        step = max(1, int(2 * 60 / bin_minutes))  # 2-hour steps
         
         while s < N:
             while e + 1 < N and active_acc < target_active_bins:
@@ -602,9 +610,11 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                         has_1x = False if has_3x else _span_contains_active_energy_fast(active_full, ps_energy_on_active, active_positions,
                                                                                          s, e, target_bins_24h, req_mwh_1x)
                         interrupts = 1 if unavail_count > 0 else 0
+                        wall_clock_bins = e - s + 1  # Total calendar duration
                         cand = {
                             'start': int(s), 'end': int(e),
                             'active_bins': int(active_bins),
+                            'wall_clock_bins': int(wall_clock_bins),
                             'availability_pct': float(availability_pct),
                             'nominal_hours': float(nominal_hours),
                             'energy_kwh': float(energy_kwh),
@@ -612,17 +622,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                             'contains_3x': bool(has_3x),
                             'contains_1x': bool(has_1x),
                         }
-                        rank = (
-                            0 if cand['contains_3x'] else (1 if cand['contains_1x'] else 2),
-                            cand['start'],
-                            -cand['energy_kwh'],
-                            cand['interruptions'],
-                        )
-                        if best is None or rank < best[0]:
-                            best = (rank, cand)
-                        # Early exit if we found a 3x window
-                        if cand['contains_3x']:
-                            return cand
+                        all_candidates.append(cand)
             
             # Skip ahead by step, but update active_acc properly
             skip = min(step, N - s)
@@ -635,7 +635,20 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                 if s >= N:
                     break
         
-        return None if best is None else best[1]
+        if not all_candidates:
+            return None
+        
+        # Score and rank all candidates
+        # Priority: (1) PR tier: 3x=0, 1x=1, none=2 (lower is better)
+        #           (2) Wall-clock duration: shorter is better
+        #           (3) Start time: earlier is better (tiebreaker)
+        def score(c):
+            pr_tier = 0 if c['contains_3x'] else (1 if c['contains_1x'] else 2)
+            return (pr_tier, c['wall_clock_bins'], c['start'])
+        
+        # Sort by score and return best
+        all_candidates.sort(key=score)
+        return all_candidates[0]
     
     # Targets and floors
     target72 = int(round(test_hours * 60 / bin_minutes))

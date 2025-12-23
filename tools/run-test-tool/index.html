@@ -8,6 +8,8 @@
     <link rel="stylesheet" href="../../assets/sidebar.css">
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
     <style>
         :root {
             --card-bg: #3a3a3a;
@@ -159,7 +161,13 @@
         .result-stat:last-child { border-bottom: none; }
         .stat-label { color: var(--text-color); }
         .stat-value { font-family: monospace; font-weight: 600; color: var(--success-color); }
-        .download-section { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color); }
+        .download-section { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color); display: flex; gap: 1rem; flex-wrap: wrap; }
+        .btn-download { background: linear-gradient(135deg, #28a745, #20853a); }
+        .btn-download:hover { background: linear-gradient(135deg, #34ce57, #28a745); }
+        .btn-view-report { background: linear-gradient(135deg, #6c757d, #5a6268); }
+        .btn-view-report:hover { background: linear-gradient(135deg, #7d868e, #6c757d); }
+        .btn-view-charts { background: linear-gradient(135deg, #fd7e14, #e06b0a); }
+        .btn-view-charts:hover { background: linear-gradient(135deg, #ff9234, #fd7e14); }
 
         .accordion { border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; margin-bottom: 1rem; }
         .accordion-header { display: flex; align-items: center; justify-content: space-between; padding: 1rem; background: #2a2a2a; cursor: pointer; user-select: none; }
@@ -244,12 +252,15 @@
         .charts-container { display: flex; flex-direction: column; gap: 2rem; padding: 1rem 0; }
         .chart-wrapper { background: rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 1rem; }
         body.light-mode .chart-wrapper { background: rgba(0, 0, 0, 0.03); }
-        .chart-title { font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--text-color); }
-        .chart-canvas-container { position: relative; height: 300px; }
-        .wtg-chart-selector { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+        .chart-title { font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-color); }
+        .chart-hint { font-size: 0.75rem; color: var(--text-color); opacity: 0.6; margin-bottom: 0.75rem; }
+        .chart-canvas-container { position: relative; height: 400px; }
+        .wtg-chart-selector { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; align-items: center; }
         .wtg-chart-btn { padding: 0.5rem 1rem; background: rgba(136, 176, 255, 0.2); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); cursor: pointer; font-size: 0.85rem; }
         .wtg-chart-btn:hover { background: rgba(136, 176, 255, 0.3); }
         .wtg-chart-btn.active { background: var(--accent-color); color: #000; font-weight: 600; }
+        .wtg-chart-btn.reset-zoom-btn { background: rgba(253, 126, 20, 0.2); margin-left: auto; }
+        .wtg-chart-btn.reset-zoom-btn:hover { background: rgba(253, 126, 20, 0.4); }
     </style>
 </head>
 <body>
@@ -517,13 +528,15 @@
             <span class="card-title">Results Summary</span>
         </div>
         <div id="results-content"></div>
-        <div id="preview-container"></div>
         <div class="download-section">
-            <button class="btn btn-primary" id="view-report-btn" style="display: none;">
-                <i class="fa-solid fa-eye"></i> View Report
+            <button class="btn btn-download" id="download-btn" style="display: none;">
+                <i class="fa-solid fa-download"></i> Download Excel
             </button>
-            <button class="btn btn-primary" id="download-btn" style="display: none;">
-                <i class="fa-solid fa-download"></i> Download Excel Report
+            <button class="btn btn-view-report" id="view-report-btn" style="display: none;">
+                <i class="fa-solid fa-table"></i> View Report
+            </button>
+            <button class="btn btn-view-charts" id="view-charts-btn" style="display: none;">
+                <i class="fa-solid fa-chart-line"></i> View Charts
             </button>
         </div>
     </div>
@@ -710,9 +723,9 @@
         const progressFill = document.getElementById('progress-fill');
         const resultsCard = document.getElementById('results-card');
         const resultsContent = document.getElementById('results-content');
-        const previewContainer = document.getElementById('preview-container');
         const downloadBtn = document.getElementById('download-btn');
         const viewReportBtn = document.getElementById('view-report-btn');
+        const viewChartsBtn = document.getElementById('view-charts-btn');
         const loadingOverlay = document.getElementById('pyodide-loading');
         const airDensityBehaviorEl = document.getElementById('air-density-behavior');
         const airDensityDefaultEl = document.getElementById('air-density-default');
@@ -929,7 +942,8 @@
             runBtn.disabled = true;
             resultsCard.classList.remove('visible');
             downloadBtn.style.display = 'none';
-            previewContainer.innerHTML = '';
+            viewReportBtn.style.display = 'none';
+            viewChartsBtn.style.display = 'none';
             try {
                 // Pass pasted data as string instead of file bytes
                 pyodide.globals.set('input_data_text', scadaData);
@@ -994,6 +1008,7 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                         outputBlob = new Blob([outputBytes.toJs()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                         downloadBtn.style.display = 'block';
                         viewReportBtn.style.display = 'block';
+                        viewChartsBtn.style.display = 'block';
                         log('Excel report ready for download or viewing', 'success');
                     }
                 } else {
@@ -1028,7 +1043,6 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
 
         function displayResults(result) {
             resultsContent.innerHTML = '';
-            previewContainer.innerHTML = '';
             const stats = [
                 ['WTGs Detected', result.wtg_count],
                 ['Windows Found', result.windows_found],
@@ -1042,43 +1056,7 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 stat.innerHTML = `<span class="stat-label">${label}</span><span class="stat-value">${value}</span>`;
                 resultsContent.appendChild(stat);
             });
-            if (result.preview && result.preview.columns && result.preview.rows) {
-                renderPreview(result.preview);
-            }
             resultsCard.classList.add('visible');
-        }
-
-        function renderPreview(preview) {
-            const table = document.createElement('table');
-            table.className = 'preview-table';
-            const thead = document.createElement('thead');
-            const headRow = document.createElement('tr');
-            preview.columns.forEach(col => {
-                const th = document.createElement('th');
-                th.textContent = col;
-                headRow.appendChild(th);
-            });
-            thead.appendChild(headRow);
-            table.appendChild(thead);
-
-            const tbody = document.createElement('tbody');
-            preview.rows.forEach(r => {
-                const tr = document.createElement('tr');
-                r.forEach(val => {
-                    const td = document.createElement('td');
-                    td.textContent = val === null ? '' : val;
-                    tr.appendChild(td);
-                });
-                tbody.appendChild(tr);
-            });
-            table.appendChild(tbody);
-
-            const title = document.createElement('div');
-            title.style.marginTop = '1rem';
-            title.style.fontWeight = '600';
-            title.textContent = 'Preview (first rows with wind speed, air density, expected power, PR)';
-            previewContainer.appendChild(title);
-            previewContainer.appendChild(table);
         }
 
         downloadBtn.addEventListener('click', () => {
@@ -1104,6 +1082,22 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 showReportModal();
             } catch (e) {
                 log('Error parsing Excel file: ' + e.message, 'error');
+            }
+        });
+
+        viewChartsBtn.addEventListener('click', async () => {
+            if (!outputBlob) return;
+            try {
+                // Load workbook if not already loaded
+                if (!reportWorkbook) {
+                    const arrayBuffer = await outputBlob.arrayBuffer();
+                    reportWorkbook = XLSX.read(arrayBuffer, { type: 'array' });
+                }
+                // Open modal and go directly to charts view
+                showReportModal();
+                showChartsView();
+            } catch (e) {
+                log('Error loading charts: ' + e.message, 'error');
             }
         });
 
@@ -1225,8 +1219,9 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 const wtgName = name.replace('_Data', '');
                 html += `<button class="wtg-chart-btn${idx === 0 ? ' active' : ''}" data-sheet="${name}" onclick="renderWTGChart('${name}')">${wtgName}</button>`;
             });
+            html += '<button class="wtg-chart-btn reset-zoom-btn" onclick="resetChartZoom()" title="Reset Zoom"><i class="fa-solid fa-arrows-to-dot"></i> Reset Zoom</button>';
             html += '</div>';
-            html += '<div class="chart-wrapper"><div class="chart-title" id="chart-title">Select a WTG</div><div class="chart-canvas-container"><canvas id="power-chart"></canvas></div></div>';
+            html += '<div class="chart-wrapper"><div class="chart-title" id="chart-title">Select a WTG</div><div class="chart-hint">Scroll to zoom • Drag to select area • Hold Shift + drag to pan</div><div class="chart-canvas-container"><canvas id="power-chart"></canvas></div></div>';
             
             bodyContainer.innerHTML = html;
             
@@ -1350,6 +1345,27 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                             bodyColor: textColor,
                             borderColor: isDark ? '#555' : '#ddd',
                             borderWidth: 1
+                        },
+                        zoom: {
+                            pan: {
+                                enabled: true,
+                                mode: 'xy',
+                            },
+                            zoom: {
+                                wheel: {
+                                    enabled: true,
+                                },
+                                pinch: {
+                                    enabled: true
+                                },
+                                drag: {
+                                    enabled: true,
+                                    backgroundColor: 'rgba(136, 176, 255, 0.25)',
+                                    borderColor: 'rgba(136, 176, 255, 0.8)',
+                                    borderWidth: 1
+                                },
+                                mode: 'xy',
+                            }
                         }
                     },
                     scales: {
@@ -1376,6 +1392,12 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             });
             
             window.activeCharts = [chart];
+        }
+
+        function resetChartZoom() {
+            if (window.activeCharts && window.activeCharts.length > 0) {
+                window.activeCharts.forEach(chart => chart.resetZoom());
+            }
         }
 
         window.addEventListener('DOMContentLoaded', () => {
