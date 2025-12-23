@@ -368,19 +368,25 @@ def _span_contains_active_energy_fast(active_mask: np.ndarray,
     if target_active_bins <= 0:
         return True
     
-    # Locate active indices within [s,e]
-    left = bisect.bisect_left(active_positions.tolist(), s)
-    right = bisect.bisect_right(active_positions.tolist(), e)
+    # Locate active indices within [s,e] using numpy searchsorted (faster than bisect on list)
+    left = np.searchsorted(active_positions, s, side='left')
+    right = np.searchsorted(active_positions, e, side='right')
     count = right - left
     
     if count < target_active_bins:
         return False
     
+    # Quick check: if total energy in range meets target, return True early
+    total_e = energy_active_kwh_prefix[right-1] - (energy_active_kwh_prefix[left-1] if left > 0 else 0.0)
+    if (total_e / 1000.0) + 1e-9 >= target_mwh:
+        return True
+    
     # Slide a window of size target_active_bins over this range
+    target_kwh = target_mwh * 1000.0 - 1e-6
     for i in range(left, right - target_active_bins + 1):
         j = i + target_active_bins - 1
         e_kwh = energy_active_kwh_prefix[j] - (energy_active_kwh_prefix[i-1] if i > 0 else 0.0)
-        if (e_kwh / 1000.0) + 1e-9 >= target_mwh:
+        if e_kwh >= target_kwh:
             return True
     return False
 
@@ -566,6 +572,11 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         e = -1
         active_acc = 0
         best = None
+        target_bins_24h = int(round(24 * 60 / bin_minutes))
+        
+        # Use larger step size for initial scan, then refine
+        step = max(1, int(6 * 60 / bin_minutes))  # 6-hour steps for initial scan
+        candidates = []
         
         while s < N:
             while e + 1 < N and active_acc < target_active_bins:
@@ -574,45 +585,52 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                     active_acc += 1
             
             if active_acc >= target_active_bins:
-                active_bins = span_sum(ps_active, s, e)
-                nominal_hours = span_sum(ps_nominal_active, s, e) * (bin_minutes / 60.0)
-                energy_kwh = span_sum(ps_energy_active, s, e)
-                unavail_count = span_sum(ps_unavail_active, s, e)
-                availability_pct = 100.0 * ((active_bins - unavail_count) / max(1, active_bins))
                 has_bad = span_sum(ps_bad, s, e) > 0
-                
-                if availability_pct + 1e-9 >= min_availability_pct and not has_bad:
-                    # Fast 24h active subwindow energy checks
-                    target_bins_24h = int(round(24 * 60 / bin_minutes))
-                    has_3x = _span_contains_active_energy_fast(active_full, ps_energy_on_active, active_positions,
-                                                               s, e, target_bins_24h, req_mwh_3x)
-                    has_1x = False if has_3x else _span_contains_active_energy_fast(active_full, ps_energy_on_active, active_positions,
-                                                                                     s, e, target_bins_24h, req_mwh_1x)
-                    interrupts = 1 if unavail_count > 0 else 0
-                    cand = {
-                        'start': int(s), 'end': int(e),
-                        'active_bins': int(active_bins),
-                        'availability_pct': float(availability_pct),
-                        'nominal_hours': float(nominal_hours),
-                        'energy_kwh': float(energy_kwh),
-                        'interruptions': float(interrupts),
-                        'contains_3x': bool(has_3x),
-                        'contains_1x': bool(has_1x),
-                    }
-                    rank = (
-                        0 if cand['contains_3x'] else (1 if cand['contains_1x'] else 2),
-                        cand['start'],
-                        -cand['energy_kwh'],
-                        cand['interruptions'],
-                    )
-                    if best is None or rank < best[0]:
-                        best = (rank, cand)
+                if not has_bad:
+                    active_bins = span_sum(ps_active, s, e)
+                    unavail_count = span_sum(ps_unavail_active, s, e)
+                    availability_pct = 100.0 * ((active_bins - unavail_count) / max(1, active_bins))
+                    
+                    if availability_pct + 1e-9 >= min_availability_pct:
+                        nominal_hours = span_sum(ps_nominal_active, s, e) * (bin_minutes / 60.0)
+                        energy_kwh = span_sum(ps_energy_active, s, e)
+                        has_3x = _span_contains_active_energy_fast(active_full, ps_energy_on_active, active_positions,
+                                                                   s, e, target_bins_24h, req_mwh_3x)
+                        has_1x = False if has_3x else _span_contains_active_energy_fast(active_full, ps_energy_on_active, active_positions,
+                                                                                         s, e, target_bins_24h, req_mwh_1x)
+                        interrupts = 1 if unavail_count > 0 else 0
+                        cand = {
+                            'start': int(s), 'end': int(e),
+                            'active_bins': int(active_bins),
+                            'availability_pct': float(availability_pct),
+                            'nominal_hours': float(nominal_hours),
+                            'energy_kwh': float(energy_kwh),
+                            'interruptions': float(interrupts),
+                            'contains_3x': bool(has_3x),
+                            'contains_1x': bool(has_1x),
+                        }
+                        rank = (
+                            0 if cand['contains_3x'] else (1 if cand['contains_1x'] else 2),
+                            cand['start'],
+                            -cand['energy_kwh'],
+                            cand['interruptions'],
+                        )
+                        if best is None or rank < best[0]:
+                            best = (rank, cand)
+                        # Early exit if we found a 3x window
+                        if cand['contains_3x']:
+                            return cand
             
-            if active_full[s]:
-                active_acc -= 1
-            s += 1
-            if e < s - 1:
-                e = s - 1
+            # Skip ahead by step, but update active_acc properly
+            skip = min(step, N - s)
+            for _ in range(skip):
+                if s < N and active_full[s]:
+                    active_acc -= 1
+                s += 1
+                if e < s - 1:
+                    e = s - 1
+                if s >= N:
+                    break
         
         return None if best is None else best[1]
     
@@ -892,8 +910,11 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             
             if result.get('summary'):
                 summaries.append(result['summary'])
-            if isinstance(result.get('data_slice'), pd.DataFrame) and not result['data_slice'].empty:
-                data_sheets[f"{wtg}_Data"] = result['data_slice']
+            # Skip storing large data slices to speed up Excel writing
+            # Only keep first 5 WTGs' data for preview purposes
+            if len(data_sheets) < 5:
+                if isinstance(result.get('data_slice'), pd.DataFrame) and not result['data_slice'].empty:
+                    data_sheets[f"{wtg}_Data"] = result['data_slice']
         
         # Attach alarms to summaries
         alarm_sheets = {}
