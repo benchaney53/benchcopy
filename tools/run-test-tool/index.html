@@ -192,6 +192,30 @@
         .data-status { color: #888; }
         .data-status.has-data { color: var(--success-color); }
         .data-status.has-data::before { content: '✓ '; }
+
+        .data-actions { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem; }
+        .btn-preview { display: inline-flex; align-items: center; gap: 0.4rem; padding: 6px 12px; background: #4a4a4a; color: #e0e0e0; border: 1px solid var(--border-color); border-radius: 4px; font-size: 0.8rem; cursor: pointer; transition: all 0.2s; }
+        .btn-preview:hover { background: #5a5a5a; }
+        .btn-preview:disabled { opacity: 0.5; cursor: not-allowed; }
+        body.light-mode .btn-preview { background: #f0f0f0; color: #333; }
+        body.light-mode .btn-preview:hover { background: #e0e0e0; }
+
+        .preview-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.8); display: none; align-items: center; justify-content: center; z-index: 2000; padding: 2rem; }
+        .preview-modal.visible { display: flex; }
+        body.light-mode .preview-modal { background: rgba(0, 0, 0, 0.5); }
+        .preview-modal-content { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; max-width: 95vw; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+        .preview-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.25rem; border-bottom: 1px solid var(--border-color); }
+        .preview-modal-title { font-size: 1.1rem; font-weight: 600; }
+        .preview-modal-close { background: none; border: none; color: var(--text-color); font-size: 1.5rem; cursor: pointer; padding: 0; line-height: 1; opacity: 0.7; }
+        .preview-modal-close:hover { opacity: 1; }
+        .preview-modal-body { overflow: auto; padding: 1rem; max-height: calc(90vh - 60px); }
+        .preview-modal-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: monospace; }
+        .preview-modal-table th, .preview-modal-table td { border: 1px solid var(--border-color); padding: 6px 10px; text-align: left; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+        .preview-modal-table th { background: rgba(136, 176, 255, 0.15); position: sticky; top: 0; font-weight: 600; }
+        body.light-mode .preview-modal-table th { background: #e8f0fe; }
+        .preview-modal-table tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
+        body.light-mode .preview-modal-table tr:nth-child(even) { background: rgba(0, 0, 0, 0.02); }
+        .preview-modal-info { padding: 0.75rem 1rem; background: rgba(136, 176, 255, 0.1); border-bottom: 1px solid var(--border-color); font-size: 0.85rem; color: var(--text-color); }
     </style>
 </head>
 <body>
@@ -207,6 +231,17 @@
         <div class="loading-content">
             <div class="spinner"></div>
             <div class="loading-text">Loading Python runtime...</div>
+        </div>
+    </div>
+
+    <div class="preview-modal" id="preview-modal">
+        <div class="preview-modal-content">
+            <div class="preview-modal-header">
+                <span class="preview-modal-title" id="preview-modal-title">Data Preview</span>
+                <button class="preview-modal-close" onclick="closePreviewModal()">&times;</button>
+            </div>
+            <div class="preview-modal-info" id="preview-modal-info"></div>
+            <div class="preview-modal-body" id="preview-modal-body"></div>
         </div>
     </div>
 
@@ -247,7 +282,10 @@
                 <label>Paste SCADA data (tab or comma separated)</label>
                 <textarea id="scada-data-input" placeholder="Paste your SCADA data here...&#10;&#10;Example:&#10;PCTimeStamp&#9;WTG01_Power&#9;WTG01_State&#9;WTG01_ReportCategory&#10;2024-01-01 00:00:00&#9;1500&#9;Running&#9;Normal operation" style="min-height: 200px; font-family: monospace; font-size: 12px;"></textarea>
                 <div class="upload-hint" style="margin-top: 0.5rem;"><i class="fa-solid fa-circle-info"></i> Copy data from Excel/spreadsheet and paste directly</div>
-                <div class="data-status" id="scada-data-status" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
+                <div class="data-actions">
+                    <div class="data-status" id="scada-data-status" style="font-size: 0.85rem;"></div>
+                    <button class="btn-preview" id="scada-preview-btn" disabled onclick="showPreview('scada')"><i class="fa-solid fa-table"></i> Preview</button>
+                </div>
             </div>
         </div>
 
@@ -260,7 +298,10 @@
                 <label>Paste Alarm Log data (tab or comma separated)</label>
                 <textarea id="alarm-data-input" placeholder="Paste your Alarm Log data here (optional)...&#10;&#10;Example:&#10;Timestamp&#9;WTG&#9;EventType&#9;Severity&#9;Description&#10;2024-01-01 00:00:00&#9;WTG01&#9;Alarm&#9;3&#9;High wind shutdown" style="min-height: 200px; font-family: monospace; font-size: 12px;"></textarea>
                 <div class="upload-hint" style="margin-top: 0.5rem;"><i class="fa-solid fa-circle-info"></i> Optional - filters alarms for each test window</div>
-                <div class="data-status" id="alarm-data-status" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
+                <div class="data-actions">
+                    <div class="data-status" id="alarm-data-status" style="font-size: 0.85rem;"></div>
+                    <button class="btn-preview" id="alarm-preview-btn" disabled onclick="showPreview('alarm')"><i class="fa-solid fa-table"></i> Preview</button>
+                </div>
             </div>
         </div>
     </div>
@@ -533,6 +574,9 @@
         function checkRunEnabled() {
             const scadaHasData = scadaDataInput.value.trim().length > 0;
             runBtn.disabled = !(pyodide && scadaHasData);
+            // Also enable/disable preview buttons
+            document.getElementById('scada-preview-btn').disabled = !scadaHasData;
+            document.getElementById('alarm-preview-btn').disabled = !alarmDataInput.value.trim();
         }
 
         scadaDataInput.addEventListener('input', () => {
@@ -548,6 +592,78 @@
             if (result.hasData) {
                 log(`Alarm data pasted: ${result.rows} rows, ${result.cols} columns`, 'success');
             }
+            checkRunEnabled();
+        });
+
+        function parseTextToTable(text) {
+            const lines = text.split('\n').filter(l => l.trim());
+            if (lines.length === 0) return { headers: [], rows: [] };
+            const firstLine = lines[0];
+            const delimiter = firstLine.includes('\t') ? '\t' : ',';
+            const headers = firstLine.split(delimiter).map(h => h.trim());
+            const rows = lines.slice(1).map(line => line.split(delimiter).map(cell => cell.trim()));
+            return { headers, rows, delimiter: delimiter === '\t' ? 'Tab' : 'Comma' };
+        }
+
+        function showPreview(type) {
+            const textarea = type === 'scada' ? scadaDataInput : alarmDataInput;
+            const title = type === 'scada' ? 'SCADA Data Preview' : 'Alarm Log Preview';
+            const text = textarea.value.trim();
+            if (!text) return;
+
+            const { headers, rows, delimiter } = parseTextToTable(text);
+            const modal = document.getElementById('preview-modal');
+            const modalTitle = document.getElementById('preview-modal-title');
+            const modalInfo = document.getElementById('preview-modal-info');
+            const modalBody = document.getElementById('preview-modal-body');
+
+            modalTitle.textContent = title;
+            modalInfo.innerHTML = `<strong>${rows.length + 1}</strong> rows &bull; <strong>${headers.length}</strong> columns &bull; ${delimiter}-separated`;
+
+            // Build table HTML
+            let tableHtml = '<table class="preview-modal-table"><thead><tr>';
+            headers.forEach(h => {
+                tableHtml += `<th>${escapeHtml(h)}</th>`;
+            });
+            tableHtml += '</tr></thead><tbody>';
+
+            // Show up to 100 rows for performance
+            const maxRows = Math.min(rows.length, 100);
+            for (let i = 0; i < maxRows; i++) {
+                tableHtml += '<tr>';
+                const row = rows[i];
+                for (let j = 0; j < headers.length; j++) {
+                    const cell = row[j] !== undefined ? row[j] : '';
+                    tableHtml += `<td title="${escapeHtml(cell)}">${escapeHtml(cell)}</td>`;
+                }
+                tableHtml += '</tr>';
+            }
+            tableHtml += '</tbody></table>';
+
+            if (rows.length > 100) {
+                tableHtml += `<p style="margin-top: 1rem; color: var(--warning-color); font-size: 0.85rem;"><i class="fa-solid fa-circle-exclamation"></i> Showing first 100 of ${rows.length} data rows</p>`;
+            }
+
+            modalBody.innerHTML = tableHtml;
+            modal.classList.add('visible');
+        }
+
+        function closePreviewModal() {
+            document.getElementById('preview-modal').classList.remove('visible');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Close modal on escape key or clicking outside
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closePreviewModal();
+        });
+        document.getElementById('preview-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'preview-modal') closePreviewModal();
         });
 
         async function initPyodide() {
