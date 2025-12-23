@@ -640,6 +640,36 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         br = (0 if b['contains_3x'] else (1 if b['contains_1x'] else 2), b['start'], -b['energy_kwh'], b['interruptions'])
         return a if ar < br else b
     
+    # Diagnostic info for failures
+    def build_diagnostic_info():
+        cats_unique = sorted(cats_norm_full.unique().tolist())
+        total_rows = len(d)
+        total_active = int(active_full.sum())
+        total_hours = total_rows * bin_minutes / 60.0
+        active_hours = total_active * bin_minutes / 60.0
+        diag = {
+            'WTG': wtg,
+            'Mode': mode,
+            'Status': 'FAILED',
+            'Total Rows': total_rows,
+            'Total Hours of Data': round(total_hours, 1),
+            'Active Bins': total_active,
+            'Active Hours': round(active_hours, 1),
+            'Required Active Hours (Test)': test_hours,
+            'Required Active Hours (Extended)': test_hours + extension_hours if extension_hours else test_hours,
+            'Categories Found': ', '.join(cats_unique[:10]) + ('...' if len(cats_unique) > 10 else ''),
+            'Allowed Window Categories': ', '.join(allowed_window_categories),
+            'Disqualifying Categories': ', '.join(disqualifying_window_categories),
+            'Min Availability Required': min_availability_pct,
+        }
+        if cand72:
+            diag['Best 72h Candidate Availability'] = round(cand72.get('availability_pct', 0), 2)
+            diag['Best 72h Candidate Nominal Hours'] = round(cand72.get('nominal_hours', 0), 2)
+        if cand96:
+            diag['Best 96h Candidate Availability'] = round(cand96.get('availability_pct', 0), 2)
+            diag['Best 96h Candidate Nominal Hours'] = round(cand96.get('nominal_hours', 0), 2)
+        return diag
+    
     if valid(cand72) and valid(cand96):
         chosen = choose(cand72, cand96)
     elif valid(cand96):
@@ -649,8 +679,9 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     else:
         fallback = cand96 if cand96 is not None else cand72
         if fallback is None:
-            return {'wtg': wtg, 'summary': {'WTG': wtg, 'Mode': mode, 'Status': 'FAILED',
-                                            'Reason': 'No feasible 96h/72h window found.'}, 'data_slice': d.head(0)}
+            diag = build_diagnostic_info()
+            diag['Reason'] = 'No feasible 96h/72h window found. Check if categories match and data has enough rows.'
+            return {'wtg': wtg, 'summary': diag, 'data_slice': d.head(0)}
         s_idx, e_idx = fallback['start'], fallback['end']
         slice_df, summ = _evaluate_and_summarize(d, ts_col, wtg, power_col, state_col, cat_col,
                                                  s_idx, e_idx, rated_power_kw, bin_minutes,
