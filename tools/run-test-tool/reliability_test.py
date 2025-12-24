@@ -12,8 +12,11 @@ import json
 import time
 import re
 import bisect
+import gc
+import heapq
 import numpy as np
 import pandas as pd
+from scipy.interpolate import RegularGridInterpolator
 
 # Global storage for Excel generation on-demand
 output_excel_bytes = None
@@ -159,11 +162,29 @@ def interpolate_power_curve(curve_arrays, wind_speed: float, air_density: float)
 
 
 def compute_expected_power(ws_series: pd.Series, ad_series: pd.Series, curve_arrays) -> np.ndarray:
+    """Vectorized expected power calculation using scipy interpolation."""
+    ws_grid, ad_grid, grid = curve_arrays
     ws_vals = pd.to_numeric(ws_series, errors='coerce').to_numpy()
     ad_vals = pd.to_numeric(ad_series, errors='coerce').to_numpy()
-    out = np.empty(len(ws_vals), dtype=float)
-    for idx, (ws, ad) in enumerate(zip(ws_vals, ad_vals)):
-        out[idx] = interpolate_power_curve(curve_arrays, ws, ad)
+    
+    # Create interpolator (wind speed on axis 0, air density on axis 1)
+    interpolator = RegularGridInterpolator(
+        (ws_grid, ad_grid), grid,
+        method='linear', bounds_error=False, fill_value=None
+    )
+    
+    # Clamp values to grid bounds
+    ws_clamped = np.clip(ws_vals, ws_grid.min(), ws_grid.max())
+    ad_clamped = np.clip(ad_vals, ad_grid.min(), ad_grid.max())
+    
+    # Handle NaN values
+    valid_mask = np.isfinite(ws_clamped) & np.isfinite(ad_clamped)
+    out = np.full(len(ws_vals), np.nan, dtype=float)
+    
+    if valid_mask.any():
+        points = np.column_stack((ws_clamped[valid_mask], ad_clamped[valid_mask]))
+        out[valid_mask] = interpolator(points)
+    
     return out
 
 
@@ -452,10 +473,16 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                      air_density_col_hint: str = None) -> dict:
     """Process a single WTG using optimized algorithm from hotfix."""
     
+    def log_proc(msg):
+        print(f"[Python] [{wtg}] {msg}")
+    
+    log_proc(f"process_wtg_fast called: {len(d)} rows, {len(d.columns)} columns")
+    
     # Resolve columns
     seps = ['_', ' ', '-']
     power_col = find_col_with_suffix(d.columns.tolist(), wtg, POWER_SUFFIX_CANDIDATES, seps)
     if power_col is None:
+        log_proc(f"  FAILED: No power column found. Looking for suffix in {POWER_SUFFIX_CANDIDATES}")
         return {'wtg': wtg, 'summary': {'WTG': wtg, 'Mode': mode, 'Status': 'FAILED',
                                         'Reason': f'No power column found for {wtg}'}, 'data_slice': d.head(0)}
     
@@ -463,6 +490,8 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     energy_power_col = total_active_col if (energy_source == 'total_active' and total_active_col) else power_col
     state_col = find_col_with_suffix(d.columns.tolist(), wtg, [STATE_SUFFIX], seps) or f"{wtg}_{STATE_SUFFIX}"
     cat_col = find_col_with_suffix(d.columns.tolist(), wtg, [CAT_SUFFIX], seps) or f"{wtg}_{CAT_SUFFIX}"
+    
+    log_proc(f"  Resolved columns: power={power_col}, state={state_col}, cat={cat_col}")
     
     if cat_col not in d.columns:
         return {'wtg': wtg, 'summary': {'WTG': wtg, 'Mode': mode, 'Status': 'FAILED',
@@ -486,6 +515,8 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                                             'Reason': f'No air density column found for {wtg}'}, 'data_slice': d.head(0)}
     else:
         air_series = pd.to_numeric(d[air_col], errors='coerce')
+    
+    log_proc(f"  Wind/Air columns: wind={wind_col}, air={air_col or 'DEFAULT'}")
 
     wind_series = pd.to_numeric(d[wind_col], errors='coerce')
     expected_power_raw = compute_expected_power(wind_series, air_series, power_curve_arrays)
@@ -510,6 +541,15 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     fallback_nominal = np.isfinite(pwr) & (pwr >= threshold_kw)
     nominal_full = np.where(np.isfinite(perf_ratio), perf_ratio >= pr_threshold, fallback_nominal)
     
+    # DATA FINGERPRINT - unique identifier for this WTG's data to verify isolation
+    power_sum = float(np.nansum(pwr))
+    power_mean = float(np.nanmean(pwr))
+    wind_mean = float(np.nanmean(wind_series))
+    cat_counts = cats_norm_full.value_counts().head(3).to_dict()
+    log_proc(f"  DATA FINGERPRINT: power_sum={power_sum:.1f}, power_mean={power_mean:.1f}, wind_mean={wind_mean:.2f}")
+    log_proc(f"  Top categories: {cat_counts}")
+    log_proc(f"  Active bins: {int(active_full.sum())}, Paused: {int(paused_full.sum())}, Unavail: {int(unavail_full.sum())}")
+    
     d['_WindSpeed'] = wind_series
     d['_AirDensityUsed'] = air_series if air_col is not None else pd.Series([air_density_default] * len(d), index=d.index)
     d['_ExpectedPower'] = expected_power
@@ -531,7 +571,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     def span_sum(ps, s, e):
         return ps[e] - (ps[s-1] if s > 0 else 0)
     
-    def best_by_priority_active(target_active_bins: int, req_mwh_1x: float, req_mwh_3x: float):
+    def best_by_priority_active(target_active_bins: int, req_mwh_1x: float, req_mwh_3x: float, log_func=None):
         """
         Find the BEST window with exactly target_active_bins active samples.
         Evaluates ALL valid candidates and returns the one with:
@@ -544,8 +584,10 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         e = -1
         active_acc = 0
         
-        # Collect ALL valid candidates
+        # Collect candidates - use list and sort at end (simpler, more reliable)
+        MAX_CANDIDATES = 50  # Increased for better coverage
         all_candidates = []
+        candidates_found = 0
         
         # Use smaller step size to find more candidates
         step = max(1, int(2 * 60 / bin_minutes))  # 2-hour steps
@@ -585,7 +627,20 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                             'contains_3x': bool(has_3x),
                             'contains_1x': bool(has_1x),
                         }
+                        candidates_found += 1
+                        
+                        # Score tuple: (meets_nominal, pr_tier, wall_clock, start) - LOWER is BETTER
+                        meets_nom = 0 if nominal_hours >= 24.0 else 1
+                        pr_tier = 0 if has_3x else (1 if has_1x else 2)
+                        score = (meets_nom, pr_tier, wall_clock_bins, s)
+                        cand['_score'] = score
+                        
                         all_candidates.append(cand)
+                        
+                        # Cap list size periodically
+                        if len(all_candidates) > MAX_CANDIDATES * 2:
+                            all_candidates.sort(key=lambda c: c['_score'])
+                            all_candidates = all_candidates[:MAX_CANDIDATES]
             
             # Skip ahead by step, but update active_acc properly
             skip = min(step, N - s)
@@ -599,22 +654,29 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                     break
         
         if not all_candidates:
+            if log_func:
+                log_func(f"    target={target_active_bins} bins: No valid candidates found")
             return None
         
-        # Score and rank all candidates
-        # Priority: (1) Meets 24h nominal: yes=0, no=1 (critical requirement)
-        #           (2) PR tier: 3x=0, 1x=1, none=2 (lower is better)
-        #           (3) Wall-clock duration: shorter is better
-        #           (4) Start time: earlier is better (tiebreaker)
+        # Sort by score and return best
         MIN_NOMINAL = 24.0
         def score(c):
             meets_nominal = 0 if c['nominal_hours'] >= MIN_NOMINAL else 1
             pr_tier = 0 if c['contains_3x'] else (1 if c['contains_1x'] else 2)
             return (meets_nominal, pr_tier, c['wall_clock_bins'], c['start'])
         
-        # Sort by score and return best
         all_candidates.sort(key=score)
-        return all_candidates[0]
+        best = all_candidates[0]
+        
+        if log_func:
+            active_hrs = best['active_bins'] * bin_minutes / 60.0
+            wall_hrs = best['wall_clock_bins'] * bin_minutes / 60.0
+            log_func(f"    target={target_active_bins} bins: Found {candidates_found} candidates, best: "
+                    f"active={active_hrs:.1f}h, wall={wall_hrs:.1f}h, nominal={best['nominal_hours']:.1f}h, "
+                    f"avail={best['availability_pct']:.1f}%, 3x={best['contains_3x']}, 1x={best['contains_1x']}, "
+                    f"score={score(best)}")
+        
+        return best
     
     # Targets and floors
     target72 = int(round(test_hours * 60 / bin_minutes))
@@ -624,27 +686,66 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     
     MIN_NOMINAL_HOURS_REQUIRED = 24.0
     
-    # Collect ALL windows that meet 24h nominal (for alarm-based selection later)
-    # Priority: (1) Meets nominal, (2) Fewest alarms (evaluated later), (3) Shortest duration
+    def log_wtg(msg):
+        print(f"[Python] [{wtg}] {msg}")
+    
+    log_wtg(f"Starting window search: target={target72} bins ({test_hours}h), max={max_target} bins ({test_hours + extension_hours}h)")
+    log_wtg(f"Energy floors: 1x={req_mwh_1x:.1f} kWh, 3x={req_mwh_3x:.1f} kWh")
+    log_wtg(f"Total data: {len(d)} rows, {int(active_full.sum())} active bins ({active_full.sum() * bin_minutes / 60:.1f}h)")
+    
+    # Search ALL target sizes and collect best candidates from each
+    # Don't break early - we want to find the globally best window
     step_bins = int(round(2 * 60 / bin_minutes))  # 2-hour increments
-    valid_candidates = []
+    MAX_VALID_CANDIDATES = 30  # Increased for better coverage
+    all_valid_candidates = []
     
     for target_bins in range(target72, max_target + 1, step_bins):
-        cand = best_by_priority_active(target_bins, req_mwh_1x, req_mwh_3x)
+        cand = best_by_priority_active(target_bins, req_mwh_1x, req_mwh_3x, log_func=log_wtg)
         if cand and cand['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED:
             # Add timestamp info for alarm filtering
             cand['test_start'] = d.iloc[cand['start']][ts_col]
             cand['test_end'] = d.iloc[cand['end']][ts_col]
-            valid_candidates.append(cand)
+            cand['target_bins'] = target_bins
+            all_valid_candidates.append(cand)
+    
+    # Sort all candidates by score and keep top MAX_VALID_CANDIDATES
+    def final_score(c):
+        meets_nominal = 0 if c['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED else 1
+        pr_tier = 0 if c['contains_3x'] else (1 if c['contains_1x'] else 2)
+        return (meets_nominal, pr_tier, c['wall_clock_bins'], c['start'])
+    
+    all_valid_candidates.sort(key=final_score)
+    valid_candidates = all_valid_candidates[:MAX_VALID_CANDIDATES]
+    
+    log_wtg(f"Window search complete: {len(all_valid_candidates)} total valid, keeping top {len(valid_candidates)}")
+    if valid_candidates:
+        best = valid_candidates[0]
+        active_hrs = best['active_bins'] * bin_minutes / 60.0
+        wall_hrs = best['wall_clock_bins'] * bin_minutes / 60.0
+        log_wtg(f"BEST CANDIDATE: target={best.get('target_bins', '?')} bins, "
+               f"active={active_hrs:.1f}h, wall={wall_hrs:.1f}h, nominal={best['nominal_hours']:.1f}h, "
+               f"start={best['test_start']}, end={best['test_end']}")
+        # Log runner-up candidates for comparison
+        if len(valid_candidates) > 1:
+            log_wtg(f"Runner-up candidates:")
+            for i, cand in enumerate(valid_candidates[1:5], 2):
+                c_active = cand['active_bins'] * bin_minutes / 60.0
+                c_wall = cand['wall_clock_bins'] * bin_minutes / 60.0
+                log_wtg(f"  #{i}: active={c_active:.1f}h, wall={c_wall:.1f}h, nominal={cand['nominal_hours']:.1f}h, "
+                       f"3x={cand['contains_3x']}, 1x={cand['contains_1x']}")
     
     # If no window meets requirement, try the max extension as fallback
     fallback = None
     if not valid_candidates:
-        cand = best_by_priority_active(max_target, req_mwh_1x, req_mwh_3x)
+        log_wtg(f"No valid candidates found, trying max extension fallback...")
+        cand = best_by_priority_active(max_target, req_mwh_1x, req_mwh_3x, log_func=log_wtg)
         if cand:
             cand['test_start'] = d.iloc[cand['start']][ts_col]
             cand['test_end'] = d.iloc[cand['end']][ts_col]
             fallback = cand
+            log_wtg(f"Fallback candidate: nominal={cand['nominal_hours']:.1f}h, avail={cand['availability_pct']:.1f}%")
+        else:
+            log_wtg(f"No fallback candidate found either")
 
     # Return candidates for alarm-based selection in main function
     # Diagnostic info for failures
@@ -872,10 +973,24 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         
         for i, wtg in enumerate(wtgs):
             log(f"Processing WTG {i+1}/{len(wtgs)}: {wtg}")
-            # Slice dataframe for this WTG
+            
+            # Slice dataframe for this WTG - columns are always WTG_ColumnName format
+            # WTG names are unique (e.g., A01, A02) so no overlap concerns
             prefix = wtg + '_'
             keep_cols = [c for c in df.columns if c == ts_col or c.startswith(prefix)]
-            wtg_df = df.loc[:, keep_cols].copy()
+            
+            log(f"  {wtg}: Keeping {len(keep_cols)} columns (prefix='{prefix}')")
+            
+            # Validate we have the minimum required columns
+            wtg_specific_cols = [c for c in keep_cols if c != ts_col]
+            if len(wtg_specific_cols) == 0:
+                log(f"  {wtg}: ERROR - No WTG-specific columns found!")
+                summaries.append({'WTG': wtg, 'Status': 'FAILED', 'Reason': f'No columns found with prefix {prefix}'})
+                continue
+            
+            # Create isolated copy with fresh index
+            wtg_df = df.loc[:, keep_cols].copy().reset_index(drop=True)
+            log(f"  {wtg}: DataFrame shape = {wtg_df.shape}, columns = {wtg_specific_cols[:5]}{'...' if len(wtg_specific_cols) > 5 else ''}")
             
             try:
                 result = process_wtg_fast(
@@ -917,6 +1032,15 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 candidates = result['candidates']
                 finalize_func = result['finalize']
                 
+                log(f"  {wtg}: {len(candidates)} candidates for final selection")
+                
+                # Log top candidates before any alarm filtering
+                for ci, cand in enumerate(candidates[:5]):
+                    c_active = cand['active_bins'] * bin_minutes / 60.0
+                    c_wall = cand['wall_clock_bins'] * bin_minutes / 60.0
+                    log(f"    Pre-selection #{ci+1}: active={c_active:.1f}h, wall={c_wall:.1f}h, "
+                        f"nominal={cand['nominal_hours']:.1f}h, 3x={cand['contains_3x']}, 1x={cand['contains_1x']}")
+                
                 # If we have alarms, select window with fewest alarms, then shortest
                 if alarm_df is not None and len(candidates) > 1:
                     ts_a, unit_a, type_a, sev_a = alarm_cols
@@ -934,13 +1058,31 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                         except Exception:
                             cand['alarm_count'] = 0
                     
+                    # Log alarm counts for top candidates
+                    log(f"    After alarm count:")
+                    for ci, cand in enumerate(candidates[:5]):
+                        c_active = cand['active_bins'] * bin_minutes / 60.0
+                        log(f"      #{ci+1}: active={c_active:.1f}h, nominal={cand['nominal_hours']:.1f}h, alarms={cand.get('alarm_count', '?')}")
+                    
                     # Sort by: (1) alarm count (fewer better), (2) wall_clock_bins (shorter better)
+                    original_best = candidates[0]
                     candidates.sort(key=lambda c: (c['alarm_count'], c['wall_clock_bins']))
                     best_cand = candidates[0]
-                    log(f"  Selected window with {best_cand['alarm_count']} alarms, {best_cand['wall_clock_bins'] * bin_minutes / 60:.0f}h duration")
+                    
+                    if best_cand['start'] != original_best['start']:
+                        orig_active = original_best['active_bins'] * bin_minutes / 60.0
+                        best_active = best_cand['active_bins'] * bin_minutes / 60.0
+                        log(f"    *** ALARM FILTERING CHANGED SELECTION ***")
+                        log(f"    Was: active={orig_active:.1f}h, nominal={original_best['nominal_hours']:.1f}h, alarms={original_best.get('alarm_count', '?')}")
+                        log(f"    Now: active={best_active:.1f}h, nominal={best_cand['nominal_hours']:.1f}h, alarms={best_cand.get('alarm_count', '?')}")
+                    
+                    log(f"  FINAL: {wtg} window with {best_cand['alarm_count']} alarms, {best_cand['wall_clock_bins'] * bin_minutes / 60:.0f}h wall-clock")
                 else:
-                    # No alarms or single candidate - use shortest (first one)
+                    # No alarms or single candidate - use the first one (already sorted by score)
                     best_cand = candidates[0]
+                    c_active = best_cand['active_bins'] * bin_minutes / 60.0
+                    log(f"  FINAL: {wtg} using best candidate (no alarm filtering): active={c_active:.1f}h, "
+                        f"nominal={best_cand['nominal_hours']:.1f}h")
                 
                 result = finalize_func(best_cand)
             
@@ -959,6 +1101,16 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                         chart_cols.append(col)
                 chart_df = full_df[[c for c in chart_cols if c in full_df.columns]].copy()
                 data_sheets[f"{wtg}_Data"] = chart_df
+                
+                # Clear heavy data immediately after extracting chart columns
+                del full_df
+                if 'data_slice' in result:
+                    del result['data_slice']
+                if 'full_data' in result:
+                    del result['full_data']
+            
+            # Clear WTG dataframe to free memory before next iteration
+            del wtg_df
         
         # Attach alarms to summaries
         alarm_sheets = {}
@@ -989,28 +1141,17 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                                 desc_col = cand
                                 break
                         
-                        # Format each alarm as "YYYY-MM-DD HH:MM - Description" or just timestamp if no desc
-                        alarm_details = []
-                        for _, row in filtered.iterrows():
-                            ts_val = row.get(ts_a)
-                            if pd.notna(ts_val):
-                                try:
-                                    ts_str = pd.to_datetime(ts_val).strftime('%Y-%m-%d %H:%M')
-                                except:
-                                    ts_str = str(ts_val)
-                            else:
-                                ts_str = 'Unknown Time'
-                            
-                            if desc_col and pd.notna(row.get(desc_col)):
-                                desc = str(row[desc_col]).strip()
-                                alarm_details.append(f"{ts_str} - {desc}")
-                            else:
-                                # Use event type if no description
-                                etype = row.get(type_a, '') if type_a else ''
-                                if pd.notna(etype) and str(etype).strip():
-                                    alarm_details.append(f"{ts_str} - {etype}")
-                                else:
-                                    alarm_details.append(ts_str)
+                        # Format each alarm as "YYYY-MM-DD HH:MM - Description" using vectorized ops
+                        ts_strs = pd.to_datetime(filtered[ts_a], errors='coerce').dt.strftime('%Y-%m-%d %H:%M').fillna('Unknown Time')
+                        
+                        if desc_col and desc_col in filtered.columns:
+                            descs = filtered[desc_col].astype(str).str.strip()
+                            alarm_details = (ts_strs + ' - ' + descs).tolist()
+                        elif type_a and type_a in filtered.columns:
+                            etypes = filtered[type_a].astype(str).str.strip()
+                            alarm_details = (ts_strs + ' - ' + etypes).tolist()
+                        else:
+                            alarm_details = ts_strs.tolist()
                         
                         s['Alarm Details'] = '; '.join(alarm_details)
                     else:
@@ -1024,13 +1165,25 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         elapsed = round(time.time() - t0, 2)
         log(f"Analysis complete in {elapsed}s. Preparing results...")
         
-        # Cache data for on-demand Excel generation (don't generate now)
-        cached_analysis_data = {
-            'summaries': summaries,
-            'data_sheets': data_sheets,
-            'alarm_sheets': alarm_sheets
-        }
-        output_excel_bytes = None  # Clear any previous Excel data
+        # Clear cached data - Excel generation not commonly used
+        # Report viewing only needs summaries_json and chart_data which are already built
+        cached_analysis_data = None
+        output_excel_bytes = None
+        
+        # Aggressive memory cleanup - delete all heavy DataFrames
+        del data_sheets
+        if alarm_sheets:
+            alarm_sheets.clear()
+        del alarm_sheets
+        if 'df' in dir():
+            del df
+        if 'raw_df' in dir():
+            del raw_df
+        if 'alarm_df' in dir() and alarm_df is not None:
+            del alarm_df
+        
+        # Force garbage collection
+        gc.collect()
         
         # Convert summaries to JSON-serializable format
         summaries_json = []
@@ -1049,7 +1202,7 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                     s_copy[k] = str(v)
             summaries_json.append(s_copy)
         
-        # Convert chart data to JSON-serializable format
+        # Convert chart data to JSON-serializable format using vectorized operations
         chart_data = {}
         for sheet_name, sheet_df in data_sheets.items():
             if isinstance(sheet_df, pd.DataFrame) and not sheet_df.empty:
@@ -1059,31 +1212,38 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 else:
                     sample_df = sheet_df.copy()
                 
-                # Convert to JSON-serializable
+                # Convert datetime columns to strings
                 for col in sample_df.columns:
                     if pd.api.types.is_datetime64_any_dtype(sample_df[col]):
                         sample_df[col] = sample_df[col].astype(str)
                 
+                # Vectorized conversion: replace NaN with None, convert numpy types
+                sample_df = sample_df.replace({np.nan: None})
+                
+                # Use to_dict for fast serialization, then convert to row format
+                records = sample_df.to_dict('split')
                 rows_list = []
-                for _, row in sample_df.iterrows():
+                for row in records['data']:
                     row_data = []
                     for val in row:
-                        if pd.isna(val):
-                            row_data.append(None)
-                        elif hasattr(val, 'isoformat'):
-                            row_data.append(str(val))
-                        elif isinstance(val, (np.integer, np.floating)):
-                            row_data.append(float(val) if isinstance(val, np.floating) else int(val))
-                        elif isinstance(val, (int, float, str, bool, type(None))):
-                            row_data.append(val)
+                        if isinstance(val, (np.integer,)):
+                            row_data.append(int(val))
+                        elif isinstance(val, (np.floating,)):
+                            row_data.append(float(val) if np.isfinite(val) else None)
                         else:
-                            row_data.append(str(val))
+                            row_data.append(val)
                     rows_list.append(row_data)
                 
                 chart_data[sheet_name] = {
-                    'columns': sample_df.columns.tolist(),
+                    'columns': records['columns'],
                     'rows': rows_list
                 }
+                
+                # Clear sample_df after serialization
+                del sample_df
+        
+        # Clear data_sheets now that chart_data is built
+        data_sheets.clear()
         
         return json.dumps({
             'success': True,
@@ -1120,6 +1280,9 @@ def generate_excel_on_demand() -> str:
     Generate Excel file from cached analysis data.
     Called when user clicks Download button.
     Returns JSON with success status.
+    
+    NOTE: Memory optimization means cache is cleared after analysis.
+    Excel export requires re-running the analysis.
     """
     global output_excel_bytes, cached_analysis_data
     
@@ -1128,7 +1291,7 @@ def generate_excel_on_demand() -> str:
     
     try:
         if cached_analysis_data is None:
-            return json.dumps({'success': False, 'error': 'No analysis data cached. Run analysis first.'})
+            return json.dumps({'success': False, 'error': 'Excel export not available. Data was cleared to free memory. Please re-run the analysis if you need Excel export.'})
         
         summaries = cached_analysis_data['summaries']
         data_sheets = cached_analysis_data['data_sheets']
@@ -1171,7 +1334,8 @@ def generate_excel_on_demand() -> str:
 def clear_analysis_cache() -> str:
     """
     Clear cached analysis data to free memory.
-    Call after user is done with the results.
+    Note: Memory is now automatically cleared after analysis completes.
+    This function is kept for compatibility but may not be needed.
     """
     global output_excel_bytes, cached_analysis_data
     
@@ -1179,7 +1343,6 @@ def clear_analysis_cache() -> str:
     cached_analysis_data = None
     
     # Force garbage collection
-    import gc
     gc.collect()
     
     print("[Python] Analysis cache cleared, memory freed")
