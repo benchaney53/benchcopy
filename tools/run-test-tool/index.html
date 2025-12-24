@@ -417,13 +417,6 @@
                     <option value="total_active">Total Active Power</option>
                 </select>
             </div>
-            <div class="form-group">
-                <label>Enforce Allowed Window</label>
-                <select id="enforce-allowed-window">
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
-                </select>
-            </div>
         </div>
         <div class="form-row">
             <div class="form-group">
@@ -575,7 +568,7 @@
         const SAVED_SETTINGS_IDS = [
             'mode', 'rated-power', 'test-hours', 'extension-hours',
             'min-availability', 'nominal-threshold', 'energy-source',
-            'enforce-allowed-window', 'air-density-behavior', 'air-density-default',
+            'air-density-behavior', 'air-density-default',
             'bin-minutes', 'allowed-categories', 'disallowed-categories',
             'active-base-categories', 'allowed-window-categories',
             'disqualifying-window-categories', 'wtg-separators',
@@ -940,7 +933,6 @@
                     nominal_threshold_pct: nominalThreshold,
                     bin_minutes: document.getElementById('bin-minutes').value || null,
                     energy_source: document.getElementById('energy-source').value,
-                    no_enforce_allowed_window: document.getElementById('enforce-allowed-window').value === 'no',
                     allowed_categories: document.getElementById('allowed-categories').value,
                     disallowed_categories: document.getElementById('disallowed-categories').value,
                     active_base_categories: document.getElementById('active-base-categories').value,

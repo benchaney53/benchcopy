@@ -476,7 +476,6 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                      mode: str,
                      allowed_window_categories: list,
                      disqualifying_window_categories: list,
-                     enforce_allowed_window_categories: bool,
                      power_curve_arrays,
                      pr_threshold: float,
                      air_density_default: float,
@@ -557,10 +556,8 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     ps_energy_active = np.cumsum((e_kwh_per_row * active_full).astype(np.float64))
     ps_unavail_active = np.cumsum((unavail_full & active_full).astype(np.int32))
     
-    if enforce_allowed_window_categories:
-        bad_mask = (cats_norm_full.isin(disq_window_set) | ~cats_norm_full.isin(allow_window_set)).to_numpy()
-    else:
-        bad_mask = cats_norm_full.isin(disq_window_set).to_numpy()
+    # Bad mask: bins that are disqualifying or not in allowed window categories
+    bad_mask = (cats_norm_full.isin(disq_window_set) | ~cats_norm_full.isin(allow_window_set)).to_numpy()
     ps_bad = np.cumsum(bad_mask.astype(np.int32))
     
     # Build active-only index and its energy prefix for fast 24h subwindow checks
@@ -654,30 +651,37 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     
     # Targets and floors
     target72 = int(round(test_hours * 60 / bin_minutes))
-    target96 = int(round((test_hours + extension_hours) * 60 / bin_minutes)) if extension_hours > 0 else None
+    max_target = int(round((test_hours + extension_hours) * 60 / bin_minutes)) if extension_hours > 0 else target72
     req_mwh_1x = 0.5 * (rated_power_kw / 1000.0) * 24.0
     req_mwh_3x = 3.0 * req_mwh_1x
     
-    # Evaluate candidates
-    cand72 = best_by_priority_active(target72, req_mwh_1x, req_mwh_3x)
-    cand96 = best_by_priority_active(target96, req_mwh_1x, req_mwh_3x) if target96 else None
-    
     MIN_NOMINAL_HOURS_REQUIRED = 24.0
     
-    def valid(c):
-        return c and c['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED
+    # Collect ALL windows that meet 24h nominal (for alarm-based selection later)
+    # Priority: (1) Meets nominal, (2) Fewest alarms (evaluated later), (3) Shortest duration
+    step_bins = int(round(2 * 60 / bin_minutes))  # 2-hour increments
+    valid_candidates = []
     
-    def choose(a, b):
-        if a is None:
-            return b
-        if b is None:
-            return a
-        ar = (0 if a['contains_3x'] else (1 if a['contains_1x'] else 2), a['start'], -a['energy_kwh'], a['interruptions'])
-        br = (0 if b['contains_3x'] else (1 if b['contains_1x'] else 2), b['start'], -b['energy_kwh'], b['interruptions'])
-        return a if ar < br else b
+    for target_bins in range(target72, max_target + 1, step_bins):
+        cand = best_by_priority_active(target_bins, req_mwh_1x, req_mwh_3x)
+        if cand and cand['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED:
+            # Add timestamp info for alarm filtering
+            cand['test_start'] = d.iloc[cand['start']][ts_col]
+            cand['test_end'] = d.iloc[cand['end']][ts_col]
+            valid_candidates.append(cand)
     
+    # If no window meets requirement, try the max extension as fallback
+    fallback = None
+    if not valid_candidates:
+        cand = best_by_priority_active(max_target, req_mwh_1x, req_mwh_3x)
+        if cand:
+            cand['test_start'] = d.iloc[cand['start']][ts_col]
+            cand['test_end'] = d.iloc[cand['end']][ts_col]
+            fallback = cand
+
+    # Return candidates for alarm-based selection in main function
     # Diagnostic info for failures
-    def build_diagnostic_info():
+    def build_diagnostic_info(best_cand=None):
         cats_unique = [c for c in sorted(cats_norm_full.unique().tolist()) if c and c.lower() != 'nan']
         total_rows = len(d)
         total_active = int(active_full.sum())
@@ -698,64 +702,60 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
             'Disqualifying Categories': ', '.join(disqualifying_window_categories),
             'Min Availability Required': min_availability_pct,
         }
-        if cand72:
-            diag['Best 72h Candidate Availability'] = round(cand72.get('availability_pct', 0), 2)
-            diag['Best 72h Candidate Nominal Hours'] = round(cand72.get('nominal_hours', 0), 2)
-        if cand96:
-            diag['Best 96h Candidate Availability'] = round(cand96.get('availability_pct', 0), 2)
-            diag['Best 96h Candidate Nominal Hours'] = round(cand96.get('nominal_hours', 0), 2)
+        if best_cand:
+            diag['Best Candidate Availability'] = round(best_cand.get('availability_pct', 0), 2)
+            diag['Best Candidate Nominal Hours'] = round(best_cand.get('nominal_hours', 0), 2)
+            diag['Best Candidate Active Bins'] = best_cand.get('active_bins', 0)
         return diag
     
-    if valid(cand72) and valid(cand96):
-        chosen = choose(cand72, cand96)
-    elif valid(cand96):
-        chosen = cand96
-    elif valid(cand72):
-        chosen = cand72
-    else:
-        fallback = cand96 if cand96 is not None else cand72
-        if fallback is None:
-            diag = build_diagnostic_info()
-            diag['Reason'] = 'No feasible 96h/72h window found. Check if categories match and data has enough rows.'
-            # Return full data for charting even on failure
-            full_df = d.copy()
-            full_df['_InWindow'] = False
-            return {'wtg': wtg, 'summary': diag, 'data_slice': full_df, 'window_start': None, 'window_end': None}
-        s_idx, e_idx = fallback['start'], fallback['end']
+    def finalize_result(chosen):
+        """Build final result from chosen candidate."""
+        s_idx, e_idx = chosen['start'], chosen['end']
         slice_df, summ = _evaluate_and_summarize(d, ts_col, wtg, power_col, state_col, cat_col,
                                                  s_idx, e_idx, rated_power_kw, bin_minutes,
                                                  nominal_threshold_pct, blocked_set, active_base_set,
                                                  energy_power_col, pr_threshold, air_density_source)
-        summ.update({'Mode': mode, 'Status': 'completed_due_to_climatic_conditions', 'Nominal 24h Achieved': False})
-        # Return full data with window markers
+        
+        if chosen['nominal_hours'] < MIN_NOMINAL_HOURS_REQUIRED:
+            summ.update({'Mode': mode, 'Status': 'completed_due_to_climatic_conditions', 'Nominal 24h Achieved': False})
+        else:
+            if chosen['contains_3x']:
+                status = 'PASSED (3x floor achieved)'
+            elif chosen['contains_1x']:
+                status = 'PASSED (1x floor achieved)'
+            else:
+                status = 'PASSED'
+            summ.update({'Mode': mode,
+                         'Status': status,
+                         'Nominal 24h Achieved': bool(chosen['contains_3x'] or chosen['contains_1x']),
+                         'Contains 24h subwindow >= 3x floor': bool(chosen['contains_3x']),
+                         'Contains 24h subwindow >= 1x floor': bool(chosen['contains_1x'])})
+        
         full_df = d.copy()
         full_df['_InWindow'] = False
         full_df.iloc[s_idx:e_idx+1, full_df.columns.get_loc('_InWindow')] = True
         return {'wtg': wtg, 'summary': summ, 'data_slice': full_df, 'window_start': s_idx, 'window_end': e_idx}
     
-    s_idx, e_idx = chosen['start'], chosen['end']
-    slice_df, summ = _evaluate_and_summarize(d, ts_col, wtg, power_col, state_col, cat_col,
-                                             s_idx, e_idx, rated_power_kw, bin_minutes,
-                                             nominal_threshold_pct, blocked_set, active_base_set,
-                                             energy_power_col, pr_threshold, air_density_source)
-    # Determine status based on 24h subwindow achievement
-    if chosen['contains_3x']:
-        status = 'PASSED (3x floor achieved)'
-    elif chosen['contains_1x']:
-        status = 'PASSED (1x floor achieved)'
-    else:
-        status = 'PASSED'
+    # If we have valid candidates, return them for alarm-based selection
+    if valid_candidates:
+        return {
+            'wtg': wtg,
+            'candidates': valid_candidates,
+            'finalize': finalize_result,
+            'full_data': d,
+            'ts_col': ts_col
+        }
     
-    summ.update({'Mode': mode,
-                 'Status': status,
-                 'Nominal 24h Achieved': bool(chosen['contains_3x'] or chosen['contains_1x']),
-                 'Contains 24h subwindow >= 3x floor': bool(chosen['contains_3x']),
-                 'Contains 24h subwindow >= 1x floor': bool(chosen['contains_1x'])})
-    # Return full data with window markers for charting
-    full_df = d.copy()
-    full_df['_InWindow'] = False
-    full_df.iloc[s_idx:e_idx+1, full_df.columns.get_loc('_InWindow')] = True
-    return {'wtg': wtg, 'summary': summ, 'data_slice': full_df, 'window_start': s_idx, 'window_end': e_idx}
+    # No valid candidates - use fallback or fail
+    if fallback is None:
+        diag = build_diagnostic_info()
+        diag['Reason'] = 'No feasible window found. Check if categories match and data has enough rows.'
+        full_df = d.copy()
+        full_df['_InWindow'] = False
+        return {'wtg': wtg, 'summary': diag, 'data_slice': full_df, 'window_start': None, 'window_end': None}
+    
+    # Fallback doesn't meet 24h nominal but use it anyway
+    return finalize_result(fallback)
 
 
 def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
@@ -835,7 +835,6 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         active_base_categories = [x.strip() for x in params.get('active_base_categories', 'Normal operation').split(',') if x.strip()]
         allowed_window_categories = [x.strip() for x in params.get('allowed_window_categories', 'Normal operation,Scheduled maintenance,Owner,Environmental,Utility').split(',') if x.strip()]
         disqualifying_window_categories = [x.strip() for x in params.get('disqualifying_window_categories', 'Manufacturer,Unscheduled maintenance').split(',') if x.strip()]
-        enforce_allowed = not params.get('no_enforce_allowed_window', False)
 
         pr_threshold = float(params.get('pr_threshold', 0.97))
         air_density_default = float(params.get('air_density_default', 1.225))
@@ -929,7 +928,6 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                     mode=mode,
                     allowed_window_categories=allowed_window_categories,
                     disqualifying_window_categories=disqualifying_window_categories,
-                    enforce_allowed_window_categories=enforce_allowed,
                     power_curve_arrays=power_curve_arrays,
                     pr_threshold=pr_threshold,
                     air_density_default=air_density_default,
@@ -946,6 +944,38 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                     'available_columns': ex.available_columns,
                     'air_density_default': air_density_default
                 })
+            
+            # Handle results with multiple candidates (for alarm-based selection)
+            if 'candidates' in result:
+                candidates = result['candidates']
+                finalize_func = result['finalize']
+                
+                # If we have alarms, select window with fewest alarms, then shortest
+                if alarm_df is not None and len(candidates) > 1:
+                    ts_a, unit_a, type_a, sev_a = alarm_cols
+                    for cand in candidates:
+                        try:
+                            start = pd.to_datetime(cand['test_start'])
+                            end = pd.to_datetime(cand['test_end'])
+                            filtered = filter_alarm_log_for_window(
+                                alarm_df, unit_value=wtg, win_start=start, win_end=end,
+                                ts_col=ts_a, unit_col=unit_a, type_col=type_a,
+                                keep_event_types=keep_event_types, sev_col=sev_a,
+                                min_severity=min_severity
+                            )
+                            cand['alarm_count'] = len(filtered)
+                        except Exception:
+                            cand['alarm_count'] = 0
+                    
+                    # Sort by: (1) alarm count (fewer better), (2) wall_clock_bins (shorter better)
+                    candidates.sort(key=lambda c: (c['alarm_count'], c['wall_clock_bins']))
+                    best_cand = candidates[0]
+                    log(f"  Selected window with {best_cand['alarm_count']} alarms, {best_cand['wall_clock_bins'] * bin_minutes / 60:.0f}h duration")
+                else:
+                    # No alarms or single candidate - use shortest (first one)
+                    best_cand = candidates[0]
+                
+                result = finalize_func(best_cand)
             
             if result.get('summary'):
                 summaries.append(result['summary'])
@@ -984,8 +1014,8 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         
         # Write output Excel
         log(f"Writing Excel output with {len(summaries)} summaries, {len(data_sheets)} data sheets...")
-        output_buffer = io.BytesIO()
         t_excel = time.time()
+        output_buffer = io.BytesIO()
         with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
             t1 = time.time()
             log("Writing Summary sheet...")
@@ -993,33 +1023,32 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 pd.DataFrame(summaries).sort_values('WTG').to_excel(writer, sheet_name='Summary', index=False)
             else:
                 pd.DataFrame({'Message': ['No valid windows found']}).to_excel(writer, sheet_name='Summary', index=False)
-            log(f"  Summary done in {time.time() - t1:.1f}s")
+            log(f"  Summary took {round(time.time() - t1, 2)}s")
             
             log(f"Writing {len(data_sheets)} data sheets...")
+            t2 = time.time()
             sheet_count = 0
             for sheet_name, sheet_df in data_sheets.items():
                 sheet_count += 1
-                t1 = time.time()
+                t_sheet = time.time()
                 sheet_df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
-                log(f"  {sheet_count}/{len(data_sheets)}: {sheet_name} ({len(sheet_df)} rows) in {time.time() - t1:.1f}s")
+                log(f"  {sheet_name}: {len(sheet_df)} rows, {len(sheet_df.columns)} cols - {round(time.time() - t_sheet, 2)}s")
+            log(f"  Data sheets total: {round(time.time() - t2, 2)}s")
             
             # Add alarm sheets
             if alarm_sheets:
+                t3 = time.time()
                 log(f"Writing {len(alarm_sheets)} alarm sheets...")
                 for nm, adf in alarm_sheets.items():
-                    t1 = time.time()
                     adf.to_excel(writer, sheet_name=nm[:31], index=False)
-                    log(f"  {nm} ({len(adf)} rows) in {time.time() - t1:.1f}s")
                 # Combined alarms sheet
-                t1 = time.time()
                 log("Writing combined alarms sheet...")
                 all_alarms = pd.concat([adf.assign(_WTG=nm.split('_')[0]) for nm, adf in alarm_sheets.items()], ignore_index=True)
                 all_alarms.to_excel(writer, sheet_name='All_Alarms_Filtered', index=False)
-                log(f"  All_Alarms_Filtered ({len(all_alarms)} rows) in {time.time() - t1:.1f}s")
-            
-            log("Saving workbook...")
+                log(f"  Alarm sheets total: {round(time.time() - t3, 2)}s")
         
-        log(f"Excel write completed in {time.time() - t_excel:.1f}s total")
+        log(f"Excel write complete: {round(time.time() - t_excel, 2)}s total")
+        log("Finalizing Excel output...")
         
         output_buffer.seek(0)
         output_excel_bytes = output_buffer.read()
