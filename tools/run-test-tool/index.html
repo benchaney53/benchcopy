@@ -597,29 +597,13 @@
         }
 
         function saveScadaData() {
-            try {
-                const data = document.getElementById('scada-data-input').value;
-                if (data.trim()) {
-                    localStorage.setItem(SCADA_DATA_KEY, data);
-                } else {
-                    localStorage.removeItem(SCADA_DATA_KEY);
-                }
-            } catch (e) {
-                console.warn('Could not save SCADA data:', e);
-            }
+            // Disabled - SCADA data too large for localStorage (5MB limit)
+            // Data must be re-pasted each session
         }
 
         function saveAlarmData() {
-            try {
-                const data = document.getElementById('alarm-data-input').value;
-                if (data.trim()) {
-                    localStorage.setItem(ALARM_DATA_KEY, data);
-                } else {
-                    localStorage.removeItem(ALARM_DATA_KEY);
-                }
-            } catch (e) {
-                console.warn('Could not save Alarm data:', e);
-            }
+            // Disabled - Alarm data too large for localStorage (5MB limit)
+            // Data must be re-pasted each session
         }
 
         function clearDataInput(type) {
@@ -657,20 +641,7 @@
                         }
                     });
                 }
-                // Load SCADA data
-                const scadaData = localStorage.getItem(SCADA_DATA_KEY);
-                if (scadaData) {
-                    const scadaEl = document.getElementById('scada-data-input');
-                    scadaEl.value = scadaData;
-                    updateDataStatusFromText(scadaEl, document.getElementById('scada-data-status'));
-                }
-                // Load Alarm data
-                const alarmData = localStorage.getItem(ALARM_DATA_KEY);
-                if (alarmData) {
-                    const alarmEl = document.getElementById('alarm-data-input');
-                    alarmEl.value = alarmData;
-                    updateDataStatusFromText(alarmEl, document.getElementById('alarm-data-status'));
-                }
+                // SCADA and Alarm data not loaded from localStorage (too large)
                 // Update status displays for power curve if it was loaded
                 const pcEl = document.getElementById('power-curve-text');
                 const pcStatus = document.getElementById('power-curve-status');

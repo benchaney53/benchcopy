@@ -947,9 +947,19 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             
             if result.get('summary'):
                 summaries.append(result['summary'])
-            # Store data for all WTGs (chart renders on-demand when selected)
+            # Store only essential columns for charting (to keep Excel file size manageable)
             if isinstance(result.get('data_slice'), pd.DataFrame) and not result['data_slice'].empty:
-                data_sheets[f"{wtg}_Data"] = result['data_slice']
+                full_df = result['data_slice']
+                # Keep only columns needed for charts: timestamp, power, expected power, wind, air density, in-window flag
+                chart_cols = [ts_col]
+                power_col_name = f"{wtg}_Grid Production Power Avg."
+                if power_col_name in full_df.columns:
+                    chart_cols.append(power_col_name)
+                for col in ['_WindSpeed', '_AirDensityUsed', '_ExpectedPower', '_PerformanceRatio', '_InWindow']:
+                    if col in full_df.columns:
+                        chart_cols.append(col)
+                chart_df = full_df[[c for c in chart_cols if c in full_df.columns]].copy()
+                data_sheets[f"{wtg}_Data"] = chart_df
         
         # Attach alarms to summaries
         alarm_sheets = {}
