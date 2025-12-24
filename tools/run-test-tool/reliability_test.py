@@ -985,31 +985,41 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         # Write output Excel
         log(f"Writing Excel output with {len(summaries)} summaries, {len(data_sheets)} data sheets...")
         output_buffer = io.BytesIO()
+        t_excel = time.time()
         with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+            t1 = time.time()
             log("Writing Summary sheet...")
             if summaries:
                 pd.DataFrame(summaries).sort_values('WTG').to_excel(writer, sheet_name='Summary', index=False)
             else:
                 pd.DataFrame({'Message': ['No valid windows found']}).to_excel(writer, sheet_name='Summary', index=False)
+            log(f"  Summary done in {time.time() - t1:.1f}s")
             
             log(f"Writing {len(data_sheets)} data sheets...")
             sheet_count = 0
             for sheet_name, sheet_df in data_sheets.items():
                 sheet_count += 1
-                log(f"  Writing sheet {sheet_count}/{len(data_sheets)}: {sheet_name} ({len(sheet_df)} rows)")
+                t1 = time.time()
                 sheet_df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+                log(f"  {sheet_count}/{len(data_sheets)}: {sheet_name} ({len(sheet_df)} rows) in {time.time() - t1:.1f}s")
             
             # Add alarm sheets
             if alarm_sheets:
                 log(f"Writing {len(alarm_sheets)} alarm sheets...")
                 for nm, adf in alarm_sheets.items():
+                    t1 = time.time()
                     adf.to_excel(writer, sheet_name=nm[:31], index=False)
+                    log(f"  {nm} ({len(adf)} rows) in {time.time() - t1:.1f}s")
                 # Combined alarms sheet
+                t1 = time.time()
                 log("Writing combined alarms sheet...")
                 all_alarms = pd.concat([adf.assign(_WTG=nm.split('_')[0]) for nm, adf in alarm_sheets.items()], ignore_index=True)
                 all_alarms.to_excel(writer, sheet_name='All_Alarms_Filtered', index=False)
+                log(f"  All_Alarms_Filtered ({len(all_alarms)} rows) in {time.time() - t1:.1f}s")
+            
+            log("Saving workbook...")
         
-        log("Finalizing Excel output...")
+        log(f"Excel write completed in {time.time() - t_excel:.1f}s total")
         
         output_buffer.seek(0)
         output_excel_bytes = output_buffer.read()
