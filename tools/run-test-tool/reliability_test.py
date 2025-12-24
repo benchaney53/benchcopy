@@ -976,8 +976,50 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                         min_severity=min_severity
                     )
                     s['Events in Window (Alarm/Warning)'] = len(filtered)
+                    
+                    # Build alarm details string: timestamp - description for each event
                     if not filtered.empty:
                         alarm_sheets[f'{wtg}_Alarms'] = filtered
+                        # Find description column (try common names)
+                        desc_col = None
+                        for cand in ['Description', 'description', 'Message', 'message', 'Event Description', 
+                                     'Event Message', 'EventDescription', 'EventMessage', 'Alarm Description',
+                                     'Alarm Message', 'Text', 'text', 'Details', 'details']:
+                            if cand in filtered.columns:
+                                desc_col = cand
+                                break
+                        
+                        # Format each alarm as "YYYY-MM-DD HH:MM - Description" or just timestamp if no desc
+                        alarm_details = []
+                        for _, row in filtered.iterrows():
+                            ts_val = row.get(ts_a)
+                            if pd.notna(ts_val):
+                                try:
+                                    ts_str = pd.to_datetime(ts_val).strftime('%Y-%m-%d %H:%M')
+                                except:
+                                    ts_str = str(ts_val)
+                            else:
+                                ts_str = 'Unknown Time'
+                            
+                            if desc_col and pd.notna(row.get(desc_col)):
+                                desc = str(row[desc_col]).strip()
+                                alarm_details.append(f"{ts_str} - {desc}")
+                            else:
+                                # Use event type if no description
+                                etype = row.get(type_a, '') if type_a else ''
+                                if pd.notna(etype) and str(etype).strip():
+                                    alarm_details.append(f"{ts_str} - {etype}")
+                                else:
+                                    alarm_details.append(ts_str)
+                        
+                        s['Alarm Details'] = '; '.join(alarm_details)
+                    else:
+                        s['Alarm Details'] = ''
+        else:
+            # No alarm file - set empty alarm details for all summaries
+            for s in summaries:
+                s['Events in Window (Alarm/Warning)'] = 0
+                s['Alarm Details'] = ''
         
         elapsed = round(time.time() - t0, 2)
         log(f"Analysis complete in {elapsed}s. Preparing results...")
