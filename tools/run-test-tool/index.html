@@ -168,6 +168,8 @@
         .btn-download:hover { background: linear-gradient(135deg, #34ce57, #28a745); }
         .btn-view-report { background: linear-gradient(135deg, #6c757d, #5a6268); }
         .btn-view-report:hover { background: linear-gradient(135deg, #7d868e, #6c757d); }
+        .btn-copy-summary { background: linear-gradient(135deg, #17a2b8, #138496); }
+        .btn-copy-summary:hover { background: linear-gradient(135deg, #1fc8e3, #17a2b8); }
         .btn-view-charts { background: linear-gradient(135deg, #fd7e14, #e06b0a); }
         .btn-view-charts:hover { background: linear-gradient(135deg, #ff9234, #fd7e14); }
         .btn-clear-results { background: linear-gradient(135deg, #dc3545, #c82333); }
@@ -532,6 +534,9 @@
             <button class="btn btn-view-report" id="view-report-btn" style="display: none;">
                 <i class="fa-solid fa-table"></i> View Report
             </button>
+            <button class="btn btn-copy-summary" id="copy-summary-btn" style="display: none;">
+                <i class="fa-solid fa-copy"></i> Copy Summary
+            </button>
             <button class="btn btn-view-charts" id="view-charts-btn" style="display: none;">
                 <i class="fa-solid fa-chart-line"></i> View Charts
             </button>
@@ -757,6 +762,7 @@
         const resultsContent = document.getElementById('results-content');
         const downloadBtn = document.getElementById('download-btn');
         const viewReportBtn = document.getElementById('view-report-btn');
+        const copySummaryBtn = document.getElementById('copy-summary-btn');
         const viewChartsBtn = document.getElementById('view-charts-btn');
         const clearResultsBtn = document.getElementById('clear-results-btn');
         const loadingOverlay = document.getElementById('pyodide-loading');
@@ -989,6 +995,7 @@
             resultsCard.classList.remove('visible');
             downloadBtn.style.display = 'none';
             viewReportBtn.style.display = 'none';
+            copySummaryBtn.style.display = 'none';
             viewChartsBtn.style.display = 'none';
             clearResultsBtn.style.display = 'none';
             
@@ -1061,6 +1068,7 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                     outputBlob = null;
                     downloadBtn.style.display = 'block';
                     viewReportBtn.style.display = 'block';
+                    copySummaryBtn.style.display = 'block';
                     viewChartsBtn.style.display = 'block';
                     clearResultsBtn.style.display = 'block';
                     log('Results ready - click Download Excel to generate file', 'success');
@@ -1157,6 +1165,48 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             showReportModal();
         });
 
+        copySummaryBtn.addEventListener('click', async () => {
+            if (!analysisResults || !analysisResults.summaries) {
+                log('No summary data to copy', 'warning');
+                return;
+            }
+            
+            const summaries = analysisResults.summaries;
+            if (summaries.length === 0) {
+                log('No results to copy', 'warning');
+                return;
+            }
+            
+            // Get column headers from first summary
+            const headers = Object.keys(summaries[0]);
+            
+            // Build TSV string (tab-separated for easy paste into Excel)
+            let tsv = headers.join('\t') + '\n';
+            summaries.forEach(row => {
+                const values = headers.map(h => {
+                    const v = row[h];
+                    if (v === null || v === undefined) return '';
+                    return String(v).replace(/\t/g, ' ').replace(/\n/g, ' ');
+                });
+                tsv += values.join('\t') + '\n';
+            });
+            
+            try {
+                await navigator.clipboard.writeText(tsv);
+                // Brief visual feedback
+                const originalText = copySummaryBtn.innerHTML;
+                copySummaryBtn.innerHTML = '<i class="fa-solid fa-check"></i> Copied!';
+                copySummaryBtn.style.background = 'var(--success-color)';
+                setTimeout(() => {
+                    copySummaryBtn.innerHTML = originalText;
+                    copySummaryBtn.style.background = '';
+                }, 1500);
+                log('Summary copied to clipboard (TSV format - paste into Excel)', 'success');
+            } catch (err) {
+                log('Failed to copy: ' + err.message, 'error');
+            }
+        });
+
         viewChartsBtn.addEventListener('click', () => {
             if (!analysisResults) return;
             showReportModal();
@@ -1180,6 +1230,7 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             // Hide buttons and results
             downloadBtn.style.display = 'none';
             viewReportBtn.style.display = 'none';
+            copySummaryBtn.style.display = 'none';
             viewChartsBtn.style.display = 'none';
             clearResultsBtn.style.display = 'none';
             resultsCard.classList.remove('visible');

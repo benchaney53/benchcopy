@@ -1187,6 +1187,7 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             'alarm_sheets': alarm_sheets
         }
         output_excel_bytes = None
+        log(f"Cached analysis data: {len(summaries)} summaries, {len(data_sheets)} data sheets, {len(alarm_sheets)} alarm sheets")
         
         # Convert summaries to JSON-serializable format
         summaries_json = []
@@ -1293,8 +1294,11 @@ def generate_excel_on_demand() -> str:
     def log(msg):
         print(f"[Python] {msg}")
     
+    log(f"generate_excel_on_demand called. cached_analysis_data is {'None' if cached_analysis_data is None else 'set'}")
+    
     try:
         if cached_analysis_data is None:
+            log("ERROR: cached_analysis_data is None!")
             return json.dumps({'success': False, 'error': 'Excel export not available. Data was cleared to free memory. Please re-run the analysis if you need Excel export.'})
         
         summaries = cached_analysis_data['summaries']
