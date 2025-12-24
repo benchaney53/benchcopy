@@ -461,28 +461,20 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
     # Filter out nan/empty from categories list
     cats_list = [c for c in sorted(cats_norm.unique().tolist()) if c and c.lower() != 'nan']
     
-    # Calculate 24h nominal power delivery start/end timestamps
-    # Find the first and last bins that contribute to the first 24 nominal hours
-    nominal_bins_needed = int(24.0 * 60.0 / bin_minutes)  # 24 hours worth of bins
+    # Find the first and last nominal power bins in the entire window
     nominal_active_mask = nominal_valid  # Already filtered to active bins only
     nominal_indices = np.where(nominal_active_mask)[0]
     
-    nominal_24h_start_str = ''
-    nominal_24h_end_str = ''
-    if len(nominal_indices) >= nominal_bins_needed:
-        # We have at least 24h of nominal - find the range
+    nominal_start_str = ''
+    nominal_end_str = ''
+    if len(nominal_indices) > 0:
+        # First nominal bin
         first_nominal_idx = nominal_indices[0]
-        last_nominal_idx_for_24h = nominal_indices[nominal_bins_needed - 1]
-        nominal_24h_start_str = pd.to_datetime(slice_df[ts_col].iloc[first_nominal_idx]).strftime('%Y-%m-%d %H:%M')
-        # Add bin_minutes to get the actual end of that bin
-        nominal_24h_end_dt = pd.to_datetime(slice_df[ts_col].iloc[last_nominal_idx_for_24h]) + pd.Timedelta(minutes=bin_minutes)
-        nominal_24h_end_str = nominal_24h_end_dt.strftime('%Y-%m-%d %H:%M')
-    elif len(nominal_indices) > 0:
-        # We have some nominal but less than 24h - show what we have
-        first_nominal_idx = nominal_indices[0]
+        nominal_start_str = pd.to_datetime(slice_df[ts_col].iloc[first_nominal_idx]).strftime('%Y-%m-%d %H:%M')
+        # Last nominal bin - add bin_minutes to get the actual end of that bin
         last_nominal_idx = nominal_indices[-1]
-        nominal_24h_start_str = pd.to_datetime(slice_df[ts_col].iloc[first_nominal_idx]).strftime('%Y-%m-%d %H:%M')
-        nominal_24h_end_str = f"(Only {round(total_nominal_hours, 2)}h nominal)"
+        nominal_end_dt = pd.to_datetime(slice_df[ts_col].iloc[last_nominal_idx]) + pd.Timedelta(minutes=bin_minutes)
+        nominal_end_str = nominal_end_dt.strftime('%Y-%m-%d %H:%M')
     
     # Convert energy to MWh
     total_energy_mwh = total_energy_kwh / 1000.0
@@ -498,8 +490,8 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
         'Time of Test End': test_end_dt.strftime('%H:%M'),
         'Cumulative Time of Testing (h)': round(span_hours, 2),
         # Events in Window and Event Details will be added later during alarm processing
-        'Nominal Power Delivery Began': nominal_24h_start_str,
-        'Nominal Power Delivery Ended': nominal_24h_end_str,
+        'First Nominal Power': nominal_start_str,
+        'Last Nominal Power': nominal_end_str,
         'Cumulative Nominal Hours (h)': round(total_nominal_hours, 2),
         'Total Energy in Window (MWh)': round(total_energy_mwh, 2),
         # Remaining columns
@@ -1231,8 +1223,8 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             'Cumulative Time of Testing (h)',
             'Events in Window (Alarm/Warning)',
             'Event Details',
-            'Nominal Power Delivery Began',
-            'Nominal Power Delivery Ended',
+            'First Nominal Power',
+            'Last Nominal Power',
             'Cumulative Nominal Hours (h)',
             'Total Energy in Window (MWh)',
         ]
