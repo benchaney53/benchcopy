@@ -448,7 +448,8 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
         interruptions = 0
     
     test_start_dt = pd.to_datetime(slice_df[ts_col].iloc[0])
-    test_end_dt = pd.to_datetime(slice_df[ts_col].iloc[-1])
+    # Add bin_minutes to the last bin's timestamp to get the actual end time
+    test_end_dt = pd.to_datetime(slice_df[ts_col].iloc[-1]) + pd.Timedelta(minutes=bin_minutes)
     test_start_str = test_start_dt.strftime('%Y-%m-%d %H:%M')
     test_end_str = test_end_dt.strftime('%Y-%m-%d %H:%M')
     active_hours = len(active_idx) * bin_minutes / 60.0
@@ -473,7 +474,9 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
         first_nominal_idx = nominal_indices[0]
         last_nominal_idx_for_24h = nominal_indices[nominal_bins_needed - 1]
         nominal_24h_start_str = pd.to_datetime(slice_df[ts_col].iloc[first_nominal_idx]).strftime('%Y-%m-%d %H:%M')
-        nominal_24h_end_str = pd.to_datetime(slice_df[ts_col].iloc[last_nominal_idx_for_24h]).strftime('%Y-%m-%d %H:%M')
+        # Add bin_minutes to get the actual end of that bin
+        nominal_24h_end_dt = pd.to_datetime(slice_df[ts_col].iloc[last_nominal_idx_for_24h]) + pd.Timedelta(minutes=bin_minutes)
+        nominal_24h_end_str = nominal_24h_end_dt.strftime('%Y-%m-%d %H:%M')
     elif len(nominal_indices) > 0:
         # We have some nominal but less than 24h - show what we have
         first_nominal_idx = nominal_indices[0]
