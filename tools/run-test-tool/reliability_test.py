@@ -602,12 +602,15 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
             return None
         
         # Score and rank all candidates
-        # Priority: (1) PR tier: 3x=0, 1x=1, none=2 (lower is better)
-        #           (2) Wall-clock duration: shorter is better
-        #           (3) Start time: earlier is better (tiebreaker)
+        # Priority: (1) Meets 24h nominal: yes=0, no=1 (critical requirement)
+        #           (2) PR tier: 3x=0, 1x=1, none=2 (lower is better)
+        #           (3) Wall-clock duration: shorter is better
+        #           (4) Start time: earlier is better (tiebreaker)
+        MIN_NOMINAL = 24.0
         def score(c):
+            meets_nominal = 0 if c['nominal_hours'] >= MIN_NOMINAL else 1
             pr_tier = 0 if c['contains_3x'] else (1 if c['contains_1x'] else 2)
-            return (pr_tier, c['wall_clock_bins'], c['start'])
+            return (meets_nominal, pr_tier, c['wall_clock_bins'], c['start'])
         
         # Sort by score and return best
         all_candidates.sort(key=score)
