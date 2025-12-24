@@ -170,6 +170,8 @@
         .btn-view-report:hover { background: linear-gradient(135deg, #7d868e, #6c757d); }
         .btn-view-charts { background: linear-gradient(135deg, #fd7e14, #e06b0a); }
         .btn-view-charts:hover { background: linear-gradient(135deg, #ff9234, #fd7e14); }
+        .btn-clear-results { background: linear-gradient(135deg, #dc3545, #c82333); }
+        .btn-clear-results:hover { background: linear-gradient(135deg, #e4606d, #dc3545); }
 
         .accordion { border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; margin-bottom: 1rem; }
         .accordion-header { display: flex; align-items: center; justify-content: space-between; padding: 1rem; background: #2a2a2a; cursor: pointer; user-select: none; }
@@ -533,6 +535,9 @@
             <button class="btn btn-view-charts" id="view-charts-btn" style="display: none;">
                 <i class="fa-solid fa-chart-line"></i> View Charts
             </button>
+            <button class="btn btn-clear-results" id="clear-results-btn" style="display: none;">
+                <i class="fa-solid fa-trash"></i> Clear Results
+            </button>
         </div>
     </div>
 
@@ -561,6 +566,7 @@
     <script>
         let pyodide = null;
         let outputBlob = null;
+        let analysisResults = null;  // Stores summaries and chart data from analysis
 
         // Settings persistence - list of form element IDs to save/load
         const SETTINGS_KEY = 'runTestToolSettings';
@@ -752,6 +758,7 @@
         const downloadBtn = document.getElementById('download-btn');
         const viewReportBtn = document.getElementById('view-report-btn');
         const viewChartsBtn = document.getElementById('view-charts-btn');
+        const clearResultsBtn = document.getElementById('clear-results-btn');
         const loadingOverlay = document.getElementById('pyodide-loading');
         const airDensityBehaviorEl = document.getElementById('air-density-behavior');
         const airDensityDefaultEl = document.getElementById('air-density-default');
@@ -983,7 +990,17 @@
             downloadBtn.style.display = 'none';
             viewReportBtn.style.display = 'none';
             viewChartsBtn.style.display = 'none';
+            clearResultsBtn.style.display = 'none';
+            
+            // Clear previous results to free memory
+            analysisResults = null;
+            outputBlob = null;
+            
             try {
+                // Clear Python cache before new analysis
+                console.log('[RunTest] Clearing previous analysis cache...');
+                await pyodide.runPythonAsync('clear_analysis_cache()');
+                
                 // Pass pasted data as string instead of file bytes
                 console.log('[RunTest] Setting SCADA data in Pyodide...');
                 pyodide.globals.set('input_data_text', scadaData);
@@ -1038,14 +1055,15 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                     if (resultObj.alarms_processed) { msg += `, ${resultObj.alarm_events_total} alarm events`; }
                     log(msg, 'success');
                     displayResults(resultObj);
-                    const outputBytes = pyodide.globals.get('output_excel_bytes');
-                    if (outputBytes) {
-                        outputBlob = new Blob([outputBytes.toJs()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-                        downloadBtn.style.display = 'block';
-                        viewReportBtn.style.display = 'block';
-                        viewChartsBtn.style.display = 'block';
-                        log('Excel report ready for download or viewing', 'success');
-                    }
+                    
+                    // Store analysis results for View Report and Charts (no Excel blob yet)
+                    analysisResults = resultObj;
+                    outputBlob = null;
+                    downloadBtn.style.display = 'block';
+                    viewReportBtn.style.display = 'block';
+                    viewChartsBtn.style.display = 'block';
+                    clearResultsBtn.style.display = 'block';
+                    log('Results ready - click Download Excel to generate file', 'success');
                 } else {
                     if (resultObj.need_air_density_choice && allowRetry) {
                         const defaultVal = params.air_density_default || 1.225;
@@ -1094,8 +1112,35 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             resultsCard.classList.add('visible');
         }
 
-        downloadBtn.addEventListener('click', () => {
-            if (!outputBlob) return;
+        downloadBtn.addEventListener('click', async () => {
+            if (!analysisResults && !outputBlob) return;
+            
+            // Generate Excel on-demand if not already generated
+            if (!outputBlob) {
+                log('Generating Excel file...', 'info');
+                downloadBtn.disabled = true;
+                try {
+                    const genResult = await pyodide.runPythonAsync('generate_excel_on_demand()');
+                    const genObj = JSON.parse(genResult);
+                    if (genObj.success) {
+                        const outputBytes = pyodide.globals.get('output_excel_bytes');
+                        if (outputBytes) {
+                            outputBlob = new Blob([outputBytes.toJs()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                            log(`Excel generated: ${Math.round(genObj.size_bytes / 1024)} KB`, 'success');
+                        }
+                    } else {
+                        log('Error generating Excel: ' + genObj.error, 'error');
+                        downloadBtn.disabled = false;
+                        return;
+                    }
+                } catch (e) {
+                    log('Error generating Excel: ' + e.message, 'error');
+                    downloadBtn.disabled = false;
+                    return;
+                }
+                downloadBtn.disabled = false;
+            }
+            
             const url = URL.createObjectURL(outputBlob);
             const a = document.createElement('a');
             a.href = url;
@@ -1107,43 +1152,56 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             log('Downloaded: Run_Test_Windows.xlsx', 'success');
         });
 
-        let reportWorkbook = null;
-
-        viewReportBtn.addEventListener('click', async () => {
-            if (!outputBlob) return;
-            try {
-                const arrayBuffer = await outputBlob.arrayBuffer();
-                reportWorkbook = XLSX.read(arrayBuffer, { type: 'array' });
-                showReportModal();
-            } catch (e) {
-                log('Error parsing Excel file: ' + e.message, 'error');
-            }
+        viewReportBtn.addEventListener('click', () => {
+            if (!analysisResults) return;
+            showReportModal();
         });
 
-        viewChartsBtn.addEventListener('click', async () => {
-            if (!outputBlob) return;
-            try {
-                // Load workbook if not already loaded
-                if (!reportWorkbook) {
-                    const arrayBuffer = await outputBlob.arrayBuffer();
-                    reportWorkbook = XLSX.read(arrayBuffer, { type: 'array' });
+        viewChartsBtn.addEventListener('click', () => {
+            if (!analysisResults) return;
+            showReportModal();
+            showChartsView();
+        });
+
+        clearResultsBtn.addEventListener('click', async () => {
+            // Clear JS-side data
+            analysisResults = null;
+            outputBlob = null;
+            
+            // Clear Python-side cached data
+            if (pyodide) {
+                try {
+                    await pyodide.runPythonAsync('clear_analysis_cache()');
+                } catch (e) {
+                    console.warn('Could not clear Python cache:', e);
                 }
-                // Open modal and go directly to charts view
-                showReportModal();
-                showChartsView();
-            } catch (e) {
-                log('Error loading charts: ' + e.message, 'error');
             }
+            
+            // Hide buttons and results
+            downloadBtn.style.display = 'none';
+            viewReportBtn.style.display = 'none';
+            viewChartsBtn.style.display = 'none';
+            clearResultsBtn.style.display = 'none';
+            resultsCard.classList.remove('visible');
+            
+            log('Results cleared, memory freed', 'info');
         });
 
         function showReportModal() {
-            if (!reportWorkbook) return;
+            if (!analysisResults) return;
             const modal = document.getElementById('report-modal');
             const tabsContainer = document.getElementById('report-tabs');
             const bodyContainer = document.getElementById('report-body');
             
-            // Build tabs - add Charts tab first
+            // Build tabs - Summary and Charts only (no Excel workbook sheets)
             tabsContainer.innerHTML = '';
+            
+            // Add Summary tab
+            const summaryTab = document.createElement('button');
+            summaryTab.className = 'report-tab active';
+            summaryTab.textContent = 'Summary';
+            summaryTab.onclick = () => showSummaryView();
+            tabsContainer.appendChild(summaryTab);
             
             // Add Charts tab
             const chartsTab = document.createElement('button');
@@ -1152,30 +1210,19 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             chartsTab.onclick = () => showChartsView();
             tabsContainer.appendChild(chartsTab);
             
-            // Add sheet tabs
-            reportWorkbook.SheetNames.forEach((name, idx) => {
-                const tab = document.createElement('button');
-                tab.className = 'report-tab' + (idx === 0 ? ' active' : '');
-                tab.textContent = name;
-                tab.onclick = () => showReportSheet(name);
-                tabsContainer.appendChild(tab);
-            });
-            
-            // Show first sheet
-            if (reportWorkbook.SheetNames.length > 0) {
-                showReportSheet(reportWorkbook.SheetNames[0]);
-            }
+            // Show summary by default
+            showSummaryView();
             
             modal.classList.add('visible');
         }
 
-        function showReportSheet(sheetName) {
+        function showSummaryView() {
             const bodyContainer = document.getElementById('report-body');
             const tabsContainer = document.getElementById('report-tabs');
             
             // Update active tab
             Array.from(tabsContainer.children).forEach(tab => {
-                tab.classList.toggle('active', tab.textContent === sheetName);
+                tab.classList.toggle('active', tab.textContent === 'Summary');
             });
             
             // Destroy any existing charts
@@ -1184,30 +1231,32 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 window.activeCharts = [];
             }
             
-            const sheet = reportWorkbook.Sheets[sheetName];
-            const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+            const summaries = analysisResults.summaries || [];
             
-            if (data.length === 0) {
-                bodyContainer.innerHTML = '<p style="color: var(--text-color); padding: 1rem;">This sheet is empty.</p>';
+            if (summaries.length === 0) {
+                bodyContainer.innerHTML = '<p style="color: var(--text-color); padding: 1rem;">No results found.</p>';
                 return;
             }
             
+            // Get all unique keys from summaries
+            const allKeys = new Set();
+            summaries.forEach(s => Object.keys(s).forEach(k => allKeys.add(k)));
+            const headers = Array.from(allKeys);
+            
             let html = '<table class="report-table"><thead><tr>';
-            const headers = data[0] || [];
             headers.forEach(h => {
                 html += `<th title="${escapeHtml(String(h))}">${escapeHtml(String(h))}</th>`;
             });
             html += '</tr></thead><tbody>';
             
-            for (let i = 1; i < data.length; i++) {
+            summaries.forEach(s => {
                 html += '<tr>';
-                const row = data[i] || [];
-                for (let j = 0; j < headers.length; j++) {
-                    const val = row[j] !== undefined ? row[j] : '';
+                headers.forEach(h => {
+                    const val = s[h] !== undefined && s[h] !== null ? s[h] : '';
                     html += `<td title="${escapeHtml(String(val))}">${escapeHtml(String(val))}</td>`;
-                }
+                });
                 html += '</tr>';
-            }
+            });
             html += '</tbody></table>';
             
             bodyContainer.innerHTML = html;
@@ -1240,11 +1289,12 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 window.activeCharts = [];
             }
             
-            // Find WTG data sheets (sheets ending with _Data)
-            const dataSheets = reportWorkbook.SheetNames.filter(n => n.endsWith('_Data'));
+            // Find WTG data from chart_data (keys ending with _Data)
+            const chartData = analysisResults.chart_data || {};
+            const dataSheets = Object.keys(chartData).filter(n => n.endsWith('_Data'));
             
             if (dataSheets.length === 0) {
-                bodyContainer.innerHTML = '<p style="color: var(--text-color); padding: 1rem;">No WTG data sheets found. Run analysis first.</p>';
+                bodyContainer.innerHTML = '<p style="color: var(--text-color); padding: 1rem;">No WTG chart data found. Run analysis first.</p>';
                 return;
             }
             
@@ -1280,14 +1330,16 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             
             document.getElementById('chart-title').textContent = `${wtgName} - Expected Power vs Actual Power`;
             
-            const sheet = reportWorkbook.Sheets[sheetName];
-            const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-            
-            if (data.length < 2) {
+            // Get chart data from analysisResults
+            const chartDataObj = analysisResults.chart_data[sheetName];
+            if (!chartDataObj || !chartDataObj.rows || chartDataObj.rows.length < 1) {
+                document.getElementById('chart-title').textContent = `${wtgName} - No data available`;
                 return;
             }
             
-            const headers = data[0];
+            const headers = chartDataObj.columns;
+            const data = chartDataObj.rows;
+            
             const tsIdx = headers.findIndex(h => String(h).toLowerCase().includes('timestamp') || String(h).toLowerCase() === 'pctimestamp');
             const powerIdx = headers.findIndex(h => String(h).toLowerCase().includes('power avg') || String(h).toLowerCase().includes('production power'));
             const expectedIdx = headers.findIndex(h => String(h).toLowerCase().includes('expectedpower') || String(h) === '_ExpectedPower');
@@ -1305,19 +1357,13 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             let windowStart = -1;
             let windowEnd = -1;
             
-            for (let i = 1; i < data.length; i++) {
+            for (let i = 0; i < data.length; i++) {
                 const row = data[i];
                 let ts = row[tsIdx];
                 
                 // Format timestamp for display
                 if (ts) {
-                    if (typeof ts === 'number') {
-                        // Excel serial date
-                        const date = new Date((ts - 25569) * 86400 * 1000);
-                        ts = date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-                    } else {
-                        ts = String(ts).substring(0, 16);
-                    }
+                    ts = String(ts).substring(0, 16);
                 }
                 
                 labels.push(ts || '');
@@ -1330,8 +1376,8 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 if (inWindowIdx !== -1) {
                     const isIn = row[inWindowIdx] === true || row[inWindowIdx] === 'True' || row[inWindowIdx] === 'TRUE' || row[inWindowIdx] === 1;
                     inWindow.push(isIn);
-                    if (isIn && windowStart === -1) windowStart = i - 1;
-                    if (isIn) windowEnd = i - 1;
+                    if (isIn && windowStart === -1) windowStart = i;
+                    if (isIn) windowEnd = i;
                 }
             }
             

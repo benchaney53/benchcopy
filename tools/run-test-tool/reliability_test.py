@@ -15,6 +15,10 @@ import bisect
 import numpy as np
 import pandas as pd
 
+# Global storage for Excel generation on-demand
+output_excel_bytes = None
+cached_analysis_data = None  # Stores {summaries, data_sheets, alarm_sheets} for Excel generation
+
 
 class MissingAirDensityError(Exception):
     def __init__(self, wtg: str, available_columns: list):
@@ -355,42 +359,6 @@ def filter_alarm_log_for_window(alarm_df: pd.DataFrame, unit_value: str, win_sta
     return out.drop(columns=['_ts_', '_unit_norm', '_etype_norm'], errors='ignore')
 
 
-# ---------------- Fast 24h subwindow check ----------------
-
-def _span_contains_active_energy_fast(active_mask: np.ndarray,
-                                      energy_active_kwh_prefix: np.ndarray,
-                                      active_positions: np.ndarray,
-                                      s: int, e: int,
-                                      target_active_bins: int,
-                                      target_mwh: float) -> bool:
-    """Check if within [s,e] there exists a contiguous subwindow of exactly
-    target_active_bins ACTIVE samples whose energy >= target_mwh."""
-    if target_active_bins <= 0:
-        return True
-    
-    # Locate active indices within [s,e] using numpy searchsorted (faster than bisect on list)
-    left = np.searchsorted(active_positions, s, side='left')
-    right = np.searchsorted(active_positions, e, side='right')
-    count = right - left
-    
-    if count < target_active_bins:
-        return False
-    
-    # Quick check: if total energy in range meets target, return True early
-    total_e = energy_active_kwh_prefix[right-1] - (energy_active_kwh_prefix[left-1] if left > 0 else 0.0)
-    if (total_e / 1000.0) + 1e-9 >= target_mwh:
-        return True
-    
-    # Slide a window of size target_active_bins over this range
-    target_kwh = target_mwh * 1000.0 - 1e-6
-    for i in range(left, right - target_active_bins + 1):
-        j = i + target_active_bins - 1
-        e_kwh = energy_active_kwh_prefix[j] - (energy_active_kwh_prefix[i-1] if i > 0 else 0.0)
-        if e_kwh >= target_kwh:
-            return True
-    return False
-
-
 def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
                             power_col: str, state_col: str, cat_col: str,
                             s_idx: int, e_idx: int,
@@ -560,11 +528,6 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     bad_mask = (cats_norm_full.isin(disq_window_set) | ~cats_norm_full.isin(allow_window_set)).to_numpy()
     ps_bad = np.cumsum(bad_mask.astype(np.int32))
     
-    # Build active-only index and its energy prefix for fast 24h subwindow checks
-    active_positions = np.where(active_full)[0]
-    energy_on_active = e_kwh_per_row[active_full]
-    ps_energy_on_active = np.cumsum(energy_on_active)
-    
     def span_sum(ps, s, e):
         return ps[e] - (ps[s-1] if s > 0 else 0)
     
@@ -580,7 +543,6 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         s = 0
         e = -1
         active_acc = 0
-        target_bins_24h = int(round(24 * 60 / bin_minutes))
         
         # Collect ALL valid candidates
         all_candidates = []
@@ -604,10 +566,12 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                     if availability_pct + 1e-9 >= min_availability_pct:
                         nominal_hours = span_sum(ps_nominal_active, s, e) * (bin_minutes / 60.0)
                         energy_kwh = span_sum(ps_energy_active, s, e)
-                        has_3x = _span_contains_active_energy_fast(active_full, ps_energy_on_active, active_positions,
-                                                                   s, e, target_bins_24h, req_mwh_3x)
-                        has_1x = False if has_3x else _span_contains_active_energy_fast(active_full, ps_energy_on_active, active_positions,
-                                                                                         s, e, target_bins_24h, req_mwh_1x)
+                        
+                        # Check cumulative energy against floors (NOT requiring consecutive 24h subwindow)
+                        # 24h cumulative nominal is checked separately via nominal_hours
+                        has_3x = energy_kwh >= req_mwh_3x
+                        has_1x = energy_kwh >= req_mwh_1x
+                        
                         interrupts = 1 if unavail_count > 0 else 0
                         wall_clock_bins = e - s + 1  # Total calendar duration
                         cand = {
@@ -771,7 +735,7 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
     - alarm_file_bytes: Optional alarm log file bytes
     - alarm_file_name: Optional alarm log file name
     """
-    global output_excel_bytes
+    global output_excel_bytes, cached_analysis_data
     
     t0 = time.time()
     
@@ -1012,76 +976,69 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                     if not filtered.empty:
                         alarm_sheets[f'{wtg}_Alarms'] = filtered
         
-        # Write output Excel
-        log(f"Writing Excel output with {len(summaries)} summaries, {len(data_sheets)} data sheets...")
-        t_excel = time.time()
-        output_buffer = io.BytesIO()
-        with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-            t1 = time.time()
-            log("Writing Summary sheet...")
-            if summaries:
-                pd.DataFrame(summaries).sort_values('WTG').to_excel(writer, sheet_name='Summary', index=False)
-            else:
-                pd.DataFrame({'Message': ['No valid windows found']}).to_excel(writer, sheet_name='Summary', index=False)
-            log(f"  Summary took {round(time.time() - t1, 2)}s")
-            
-            log(f"Writing {len(data_sheets)} data sheets...")
-            t2 = time.time()
-            sheet_count = 0
-            for sheet_name, sheet_df in data_sheets.items():
-                sheet_count += 1
-                t_sheet = time.time()
-                sheet_df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
-                log(f"  {sheet_name}: {len(sheet_df)} rows, {len(sheet_df.columns)} cols - {round(time.time() - t_sheet, 2)}s")
-            log(f"  Data sheets total: {round(time.time() - t2, 2)}s")
-            
-            # Add alarm sheets
-            if alarm_sheets:
-                t3 = time.time()
-                log(f"Writing {len(alarm_sheets)} alarm sheets...")
-                for nm, adf in alarm_sheets.items():
-                    adf.to_excel(writer, sheet_name=nm[:31], index=False)
-                # Combined alarms sheet
-                log("Writing combined alarms sheet...")
-                all_alarms = pd.concat([adf.assign(_WTG=nm.split('_')[0]) for nm, adf in alarm_sheets.items()], ignore_index=True)
-                all_alarms.to_excel(writer, sheet_name='All_Alarms_Filtered', index=False)
-                log(f"  Alarm sheets total: {round(time.time() - t3, 2)}s")
-        
-        log(f"Excel write complete: {round(time.time() - t_excel, 2)}s total")
-        log("Finalizing Excel output...")
-        
-        output_buffer.seek(0)
-        output_excel_bytes = output_buffer.read()
-        
         elapsed = round(time.time() - t0, 2)
-
-        preview = None
-        for sheet_df in data_sheets.values():
+        log(f"Analysis complete in {elapsed}s. Preparing results...")
+        
+        # Cache data for on-demand Excel generation (don't generate now)
+        cached_analysis_data = {
+            'summaries': summaries,
+            'data_sheets': data_sheets,
+            'alarm_sheets': alarm_sheets
+        }
+        output_excel_bytes = None  # Clear any previous Excel data
+        
+        # Convert summaries to JSON-serializable format
+        summaries_json = []
+        for s in summaries:
+            s_copy = {}
+            for k, v in s.items():
+                if pd.isna(v):
+                    s_copy[k] = None
+                elif hasattr(v, 'isoformat'):
+                    s_copy[k] = str(v)
+                elif isinstance(v, (np.integer, np.floating)):
+                    s_copy[k] = float(v) if isinstance(v, np.floating) else int(v)
+                elif isinstance(v, (int, float, str, bool, type(None))):
+                    s_copy[k] = v
+                else:
+                    s_copy[k] = str(v)
+            summaries_json.append(s_copy)
+        
+        # Convert chart data to JSON-serializable format
+        chart_data = {}
+        for sheet_name, sheet_df in data_sheets.items():
             if isinstance(sheet_df, pd.DataFrame) and not sheet_df.empty:
-                preview_df = sheet_df.head(10).copy()
-                # Convert any Timestamp columns to strings for JSON serialization
-                for col in preview_df.columns:
-                    if pd.api.types.is_datetime64_any_dtype(preview_df[col]):
-                        preview_df[col] = preview_df[col].astype(str)
-                # Convert to list, handling any remaining non-JSON-serializable types
+                # Sample if too large (every Nth row for charts)
+                if len(sheet_df) > 2000:
+                    sample_df = sheet_df.iloc[::len(sheet_df)//2000].copy()
+                else:
+                    sample_df = sheet_df.copy()
+                
+                # Convert to JSON-serializable
+                for col in sample_df.columns:
+                    if pd.api.types.is_datetime64_any_dtype(sample_df[col]):
+                        sample_df[col] = sample_df[col].astype(str)
+                
                 rows_list = []
-                for _, row in preview_df.iterrows():
+                for _, row in sample_df.iterrows():
                     row_data = []
                     for val in row:
                         if pd.isna(val):
                             row_data.append(None)
-                        elif hasattr(val, 'isoformat'):  # Timestamp/datetime
+                        elif hasattr(val, 'isoformat'):
                             row_data.append(str(val))
+                        elif isinstance(val, (np.integer, np.floating)):
+                            row_data.append(float(val) if isinstance(val, np.floating) else int(val))
                         elif isinstance(val, (int, float, str, bool, type(None))):
                             row_data.append(val)
                         else:
                             row_data.append(str(val))
                     rows_list.append(row_data)
-                preview = {
-                    'columns': preview_df.columns.tolist(),
+                
+                chart_data[sheet_name] = {
+                    'columns': sample_df.columns.tolist(),
                     'rows': rows_list
                 }
-                break
         
         return json.dumps({
             'success': True,
@@ -1089,10 +1046,11 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             'windows_found': len(summaries),
             'bin_minutes': bin_minutes,
             'processing_time': elapsed,
-            'wtgs': wtgs[:10],
+            'wtgs': wtgs,
             'alarms_processed': alarm_df is not None,
             'alarm_events_total': sum(len(adf) for adf in alarm_sheets.values()) if alarm_sheets else 0,
-            'preview': preview
+            'summaries': summaries_json,
+            'chart_data': chart_data
         })
         
     except MissingAirDensityError as ex:
@@ -1110,6 +1068,77 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             'error': str(e),
             'traceback': traceback.format_exc()
         })
+
+
+def generate_excel_on_demand() -> str:
+    """
+    Generate Excel file from cached analysis data.
+    Called when user clicks Download button.
+    Returns JSON with success status.
+    """
+    global output_excel_bytes, cached_analysis_data
+    
+    def log(msg):
+        print(f"[Python] {msg}")
+    
+    try:
+        if cached_analysis_data is None:
+            return json.dumps({'success': False, 'error': 'No analysis data cached. Run analysis first.'})
+        
+        summaries = cached_analysis_data['summaries']
+        data_sheets = cached_analysis_data['data_sheets']
+        alarm_sheets = cached_analysis_data['alarm_sheets']
+        
+        log(f"Generating Excel with {len(summaries)} summaries, {len(data_sheets)} data sheets...")
+        t_excel = time.time()
+        output_buffer = io.BytesIO()
+        
+        with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+            log("Writing Summary sheet...")
+            if summaries:
+                pd.DataFrame(summaries).sort_values('WTG').to_excel(writer, sheet_name='Summary', index=False)
+            else:
+                pd.DataFrame({'Message': ['No valid windows found']}).to_excel(writer, sheet_name='Summary', index=False)
+            
+            log(f"Writing {len(data_sheets)} data sheets...")
+            for sheet_name, sheet_df in data_sheets.items():
+                sheet_df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+            
+            if alarm_sheets:
+                log(f"Writing {len(alarm_sheets)} alarm sheets...")
+                for nm, adf in alarm_sheets.items():
+                    adf.to_excel(writer, sheet_name=nm[:31], index=False)
+                all_alarms = pd.concat([adf.assign(_WTG=nm.split('_')[0]) for nm, adf in alarm_sheets.items()], ignore_index=True)
+                all_alarms.to_excel(writer, sheet_name='All_Alarms_Filtered', index=False)
+        
+        log(f"Excel generation complete: {round(time.time() - t_excel, 2)}s")
+        
+        output_buffer.seek(0)
+        output_excel_bytes = output_buffer.read()
+        
+        return json.dumps({'success': True, 'size_bytes': len(output_excel_bytes)})
+        
+    except Exception as e:
+        import traceback
+        return json.dumps({'success': False, 'error': str(e), 'traceback': traceback.format_exc()})
+
+
+def clear_analysis_cache() -> str:
+    """
+    Clear cached analysis data to free memory.
+    Call after user is done with the results.
+    """
+    global output_excel_bytes, cached_analysis_data
+    
+    output_excel_bytes = None
+    cached_analysis_data = None
+    
+    # Force garbage collection
+    import gc
+    gc.collect()
+    
+    print("[Python] Analysis cache cleared, memory freed")
+    return json.dumps({'success': True})
 
 
 def run_browser_analysis_from_text(data_text: str, file_name: str, params: dict,
