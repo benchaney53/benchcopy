@@ -811,6 +811,19 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                                                  nominal_threshold_pct, blocked_set, active_base_set,
                                                  energy_power_col, pr_threshold, air_density_source)
         
+        # Calculate end timestamp for exactly target72 active bins (for alarm counting)
+        # This ensures alarms are only counted for the required test hours, not extensions
+        active_count = 0
+        test_end_72h_idx = e_idx  # Default to full window end
+        for idx in range(s_idx, e_idx + 1):
+            if active_full[idx]:
+                active_count += 1
+                if active_count >= target72:
+                    test_end_72h_idx = idx
+                    break
+        test_end_72h_str = pd.to_datetime(d.iloc[test_end_72h_idx][ts_col]).strftime('%Y-%m-%d %H:%M')
+        summ['Test End (72h Active)'] = test_end_72h_str
+        
         if chosen['nominal_hours'] < MIN_NOMINAL_HOURS_REQUIRED:
             summ.update({'Mode': mode, 'Status': 'completed_due_to_climatic_conditions', 'Nominal 24h Achieved': False})
         else:
@@ -1073,48 +1086,14 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                     log(f"    Pre-selection #{ci+1}: active={c_active:.1f}h, wall={c_wall:.1f}h, "
                         f"nominal={cand['nominal_hours']:.1f}h, 3x={cand['contains_3x']}, 1x={cand['contains_1x']}")
                 
-                # If we have alarms, select window with fewest alarms, then shortest
-                if alarm_df is not None and len(candidates) > 1:
-                    ts_a, unit_a, type_a, sev_a = alarm_cols
-                    for cand in candidates:
-                        try:
-                            start = pd.to_datetime(cand['test_start'])
-                            end = pd.to_datetime(cand['test_end'])
-                            filtered = filter_alarm_log_for_window(
-                                alarm_df, unit_value=wtg, win_start=start, win_end=end,
-                                ts_col=ts_a, unit_col=unit_a, type_col=type_a,
-                                keep_event_types=keep_event_types, sev_col=sev_a,
-                                min_severity=min_severity
-                            )
-                            cand['alarm_count'] = len(filtered)
-                        except Exception:
-                            cand['alarm_count'] = 0
-                    
-                    # Log alarm counts for top candidates
-                    log(f"    After alarm count:")
-                    for ci, cand in enumerate(candidates[:5]):
-                        c_active = cand['active_bins'] * bin_minutes / 60.0
-                        log(f"      #{ci+1}: active={c_active:.1f}h, nominal={cand['nominal_hours']:.1f}h, alarms={cand.get('alarm_count', '?')}")
-                    
-                    # Sort by: (1) alarm count (fewer better), (2) wall_clock_bins (shorter better)
-                    original_best = candidates[0]
-                    candidates.sort(key=lambda c: (c['alarm_count'], c['wall_clock_bins']))
-                    best_cand = candidates[0]
-                    
-                    if best_cand['start'] != original_best['start']:
-                        orig_active = original_best['active_bins'] * bin_minutes / 60.0
-                        best_active = best_cand['active_bins'] * bin_minutes / 60.0
-                        log(f"    *** ALARM FILTERING CHANGED SELECTION ***")
-                        log(f"    Was: active={orig_active:.1f}h, nominal={original_best['nominal_hours']:.1f}h, alarms={original_best.get('alarm_count', '?')}")
-                        log(f"    Now: active={best_active:.1f}h, nominal={best_cand['nominal_hours']:.1f}h, alarms={best_cand.get('alarm_count', '?')}")
-                    
-                    log(f"  FINAL: {wtg} window with {best_cand['alarm_count']} alarms, {best_cand['wall_clock_bins'] * bin_minutes / 60:.0f}h wall-clock")
-                else:
-                    # No alarms or single candidate - use the first one (already sorted by score)
-                    best_cand = candidates[0]
-                    c_active = best_cand['active_bins'] * bin_minutes / 60.0
-                    log(f"  FINAL: {wtg} using best candidate (no alarm filtering): active={c_active:.1f}h, "
-                        f"nominal={best_cand['nominal_hours']:.1f}h")
+                # Select the best candidate (already sorted by nominal hours/PR tier)
+                # Window extension is ONLY for meeting nominal power requirements, not to avoid alarms
+                # Alarms are counted for informational purposes only, using only the first 72h of active bins
+                best_cand = candidates[0]
+                c_active = best_cand['active_bins'] * bin_minutes / 60.0
+                c_wall = best_cand['wall_clock_bins'] * bin_minutes / 60.0
+                log(f"  FINAL: {wtg} selected window: active={c_active:.1f}h, wall={c_wall:.1f}h, "
+                    f"nominal={best_cand['nominal_hours']:.1f}h, 3x={best_cand['contains_3x']}, 1x={best_cand['contains_1x']}")
                 
                 result = finalize_func(best_cand)
             
@@ -1145,6 +1124,8 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             del wtg_df
         
         # Attach alarms to summaries
+        # Use 'Test End (72h Active)' for alarm counting - only count alarms in required test hours
+        # Window extensions for nominal power should not affect alarm count
         alarm_sheets = {}
         if alarm_df is not None:
             ts_a, unit_a, type_a, sev_a = alarm_cols
@@ -1152,7 +1133,9 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 if 'Test Start' in s and 'Test End' in s:
                     wtg = s['WTG']
                     start = pd.to_datetime(s['Test Start'])
-                    end = pd.to_datetime(s['Test End'])
+                    # Use 72h active end if available, otherwise fall back to full window end
+                    end_key = 'Test End (72h Active)' if 'Test End (72h Active)' in s else 'Test End'
+                    end = pd.to_datetime(s[end_key])
                     filtered = filter_alarm_log_for_window(
                         alarm_df, unit_value=wtg, win_start=start, win_end=end,
                         ts_col=ts_a, unit_col=unit_a, type_col=type_a,
