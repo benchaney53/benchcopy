@@ -11,6 +11,7 @@
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
     <style>
         :root {
             --card-bg: #3a3a3a;
@@ -327,7 +328,7 @@
             <div class="form-group" style="margin-bottom: 0;">
                 <label>Paste SCADA data (tab or comma separated)</label>
                 <textarea id="scada-data-input" placeholder="Paste your SCADA data here...&#10;&#10;Example:&#10;PCTimeStamp&#9;WTG01_Power&#9;WTG01_State&#9;WTG01_ReportCategory&#10;2024-01-01 00:00:00&#9;1500&#9;Running&#9;Normal operation" style="min-height: 200px; font-family: monospace; font-size: 12px;"></textarea>
-                <div class="upload-hint" style="margin-top: 0.5rem;"><i class="fa-solid fa-circle-info"></i> Copy data from Excel/spreadsheet and paste directly</div>
+                <div class="upload-hint" style="margin-top: 0.5rem;"><i class="fa-solid fa-circle-info"></i> Copy data from VOB and paste directly</div>
                 <div class="data-actions">
                     <div class="data-status" id="scada-data-status" style="font-size: 0.85rem;"></div>
                     <button class="btn-preview" id="scada-preview-btn" disabled onclick="showPreview('scada')"><i class="fa-solid fa-table"></i> Preview</button>
@@ -339,12 +340,12 @@
         <div class="card" style="margin-bottom: 0;">
             <div class="card-header">
                 <div class="card-icon"><i class="fa-solid fa-bell"></i></div>
-                <span class="card-title">Alarm Log (Optional)</span>
+                <span class="card-title">Alarm Log</span>
             </div>
             <div class="form-group" style="margin-bottom: 0;">
                 <label>Paste Alarm Log data (tab or comma separated)</label>
-                <textarea id="alarm-data-input" placeholder="Paste your Alarm Log data here (optional)...&#10;&#10;Example:&#10;Timestamp&#9;WTG&#9;EventType&#9;Severity&#9;Description&#10;2024-01-01 00:00:00&#9;WTG01&#9;Alarm&#9;3&#9;High wind shutdown" style="min-height: 200px; font-family: monospace; font-size: 12px;"></textarea>
-                <div class="upload-hint" style="margin-top: 0.5rem;"><i class="fa-solid fa-circle-info"></i> Optional - filters alarms for each test window</div>
+                <textarea id="alarm-data-input" placeholder="Paste your Alarm Log data here...&#10;&#10;Example:&#10;Timestamp&#9;WTG&#9;EventType&#9;Severity&#9;Description&#10;2024-01-01 00:00:00&#9;WTG01&#9;Alarm&#9;3&#9;High wind shutdown" style="min-height: 200px; font-family: monospace; font-size: 12px;"></textarea>
+                <div class="upload-hint" style="margin-top: 0.5rem;"><i class="fa-solid fa-circle-info"></i> Copy data from VOB and paste directly</div>
                 <div class="data-actions">
                     <div class="data-status" id="alarm-data-status" style="font-size: 0.85rem;"></div>
                     <button class="btn-preview" id="alarm-preview-btn" disabled onclick="showPreview('alarm')"><i class="fa-solid fa-table"></i> Preview</button>
@@ -589,14 +590,46 @@
             }
         }
 
+        // Debounce timers for large data saves
+        let scadaSaveTimer = null;
+        let alarmSaveTimer = null;
+
         function saveScadaData() {
-            // Disabled - SCADA data too large for localStorage (5MB limit)
-            // Data must be re-pasted each session
+            // Debounce to avoid excessive writes during paste
+            clearTimeout(scadaSaveTimer);
+            scadaSaveTimer = setTimeout(() => {
+                try {
+                    const data = document.getElementById('scada-data-input').value;
+                    if (!data.trim()) {
+                        localStorage.removeItem(SCADA_DATA_KEY);
+                        return;
+                    }
+                    const compressed = LZString.compressToUTF16(data);
+                    localStorage.setItem(SCADA_DATA_KEY, compressed);
+                    console.log(`[Storage] SCADA data saved: ${data.length} chars -> ${compressed.length} compressed (${Math.round(compressed.length/data.length*100)}%)`);
+                } catch (e) {
+                    console.warn('Could not save SCADA data:', e);
+                }
+            }, 500);
         }
 
         function saveAlarmData() {
-            // Disabled - Alarm data too large for localStorage (5MB limit)
-            // Data must be re-pasted each session
+            // Debounce to avoid excessive writes during paste
+            clearTimeout(alarmSaveTimer);
+            alarmSaveTimer = setTimeout(() => {
+                try {
+                    const data = document.getElementById('alarm-data-input').value;
+                    if (!data.trim()) {
+                        localStorage.removeItem(ALARM_DATA_KEY);
+                        return;
+                    }
+                    const compressed = LZString.compressToUTF16(data);
+                    localStorage.setItem(ALARM_DATA_KEY, compressed);
+                    console.log(`[Storage] Alarm data saved: ${data.length} chars -> ${compressed.length} compressed (${Math.round(compressed.length/data.length*100)}%)`);
+                } catch (e) {
+                    console.warn('Could not save Alarm data:', e);
+                }
+            }, 500);
         }
 
         function clearDataInput(type) {
@@ -634,7 +667,35 @@
                         }
                     });
                 }
-                // SCADA and Alarm data not loaded from localStorage (too large)
+                // SCADA and Alarm data loaded from localStorage (compressed)
+                const savedScada = localStorage.getItem(SCADA_DATA_KEY);
+                if (savedScada) {
+                    try {
+                        const decompressed = LZString.decompressFromUTF16(savedScada);
+                        if (decompressed) {
+                            document.getElementById('scada-data-input').value = decompressed;
+                            const statusEl = document.getElementById('scada-data-status');
+                            updateDataStatusFromText(document.getElementById('scada-data-input'), statusEl);
+                            console.log(`[Storage] SCADA data loaded: ${decompressed.length} chars`);
+                        }
+                    } catch (e) {
+                        console.warn('Could not decompress SCADA data:', e);
+                    }
+                }
+                const savedAlarm = localStorage.getItem(ALARM_DATA_KEY);
+                if (savedAlarm) {
+                    try {
+                        const decompressed = LZString.decompressFromUTF16(savedAlarm);
+                        if (decompressed) {
+                            document.getElementById('alarm-data-input').value = decompressed;
+                            const statusEl = document.getElementById('alarm-data-status');
+                            updateDataStatusFromText(document.getElementById('alarm-data-input'), statusEl);
+                            console.log(`[Storage] Alarm data loaded: ${decompressed.length} chars`);
+                        }
+                    } catch (e) {
+                        console.warn('Could not decompress Alarm data:', e);
+                    }
+                }
                 // Update status displays for power curve if it was loaded
                 const pcEl = document.getElementById('power-curve-text');
                 const pcStatus = document.getElementById('power-curve-status');
@@ -901,8 +962,21 @@
 
         async function runAnalysis(overrides = {}, allowRetry = true) {
             const scadaData = scadaDataInput.value.trim();
-            if (!pyodide || !scadaData) return;
+            const alarmData = alarmDataInput.value.trim();
+            console.log('[RunTest] Starting analysis...');
+            console.log('[RunTest] SCADA data length:', scadaData.length, 'chars');
+            console.log('[RunTest] Alarm data length:', alarmData.length, 'chars');
+            if (!pyodide || !scadaData) {
+                console.log('[RunTest] Aborted: pyodide ready =', !!pyodide, ', has SCADA =', !!scadaData);
+                return;
+            }
+            if (!alarmData) {
+                console.log('[RunTest] Aborted: Alarm Log data is required');
+                log('Please paste Alarm Log data before running analysis', 'error');
+                return;
+            }
             log('Starting analysis...', 'info');
+            console.log('[RunTest] Validation passed, processing data...');
             setStatus('Processing pasted data...', 'loading', 10);
             runBtn.disabled = true;
             resultsCard.classList.remove('visible');
@@ -911,17 +985,14 @@
             viewChartsBtn.style.display = 'none';
             try {
                 // Pass pasted data as string instead of file bytes
+                console.log('[RunTest] Setting SCADA data in Pyodide...');
                 pyodide.globals.set('input_data_text', scadaData);
                 pyodide.globals.set('input_file_name', 'pasted_data.csv');
-                const alarmData = alarmDataInput.value.trim();
-                if (alarmData) {
-                    pyodide.globals.set('alarm_data_text', alarmData);
-                    pyodide.globals.set('alarm_file_name', 'pasted_alarms.csv');
-                    log('Alarm data included', 'info');
-                } else {
-                    pyodide.globals.set('alarm_data_text', null);
-                    pyodide.globals.set('alarm_file_name', null);
-                }
+                console.log('[RunTest] Setting Alarm data in Pyodide...');
+                pyodide.globals.set('alarm_data_text', alarmData);
+                pyodide.globals.set('alarm_file_name', 'pasted_alarms.csv');
+                log('Alarm data included', 'info');
+                console.log('[RunTest] Both datasets loaded into Pyodide');
                 const minSeverityVal = document.getElementById('alarms-min-severity').value;
                 const nominalThreshold = parseFloat(document.getElementById('nominal-threshold').value);
                 const params = {
