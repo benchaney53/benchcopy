@@ -10,6 +10,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1"></script>
     <style>
         :root {
             --card-bg: #3a3a3a;
@@ -1213,22 +1214,19 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 return;
             }
             
-            // Build UI with WTG selector buttons
+            // Build UI with WTG selector buttons - don't mark any as active initially
             let html = '<div class="wtg-chart-selector" id="wtg-chart-selector">';
             dataSheets.forEach((name, idx) => {
                 const wtgName = name.replace('_Data', '');
-                html += `<button class="wtg-chart-btn${idx === 0 ? ' active' : ''}" data-sheet="${name}" onclick="renderWTGChart('${name}')">${wtgName}</button>`;
+                html += `<button class="wtg-chart-btn" data-sheet="${name}" onclick="renderWTGChart('${name}')">${wtgName}</button>`;
             });
             html += '<button class="wtg-chart-btn reset-zoom-btn" onclick="resetChartZoom()" title="Reset Zoom"><i class="fa-solid fa-arrows-to-dot"></i> Reset Zoom</button>';
             html += '</div>';
-            html += '<div class="chart-wrapper"><div class="chart-title" id="chart-title">Select a WTG</div><div class="chart-hint">Scroll to zoom • Drag to select area • Hold Shift + drag to pan</div><div class="chart-canvas-container"><canvas id="power-chart"></canvas></div></div>';
+            html += '<div class="chart-wrapper"><div class="chart-title" id="chart-title">Select a WTG to view chart</div><div class="chart-hint">Scroll to zoom • Drag to select area • Hold Shift + drag to pan</div><div class="chart-canvas-container"><canvas id="power-chart"></canvas></div></div>';
             
             bodyContainer.innerHTML = html;
             
-            // Render first WTG chart
-            if (dataSheets.length > 0) {
-                renderWTGChart(dataSheets[0]);
-            }
+            // Don't auto-render - wait for user to click a WTG button
         }
 
         function renderWTGChart(sheetName) {
@@ -1259,6 +1257,7 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             const tsIdx = headers.findIndex(h => String(h).toLowerCase().includes('timestamp') || String(h).toLowerCase() === 'pctimestamp');
             const powerIdx = headers.findIndex(h => String(h).toLowerCase().includes('power avg') || String(h).toLowerCase().includes('production power'));
             const expectedIdx = headers.findIndex(h => String(h).toLowerCase().includes('expectedpower') || String(h) === '_ExpectedPower');
+            const inWindowIdx = headers.findIndex(h => String(h) === '_InWindow');
             
             if (tsIdx === -1 || powerIdx === -1) {
                 document.getElementById('chart-title').textContent = `${wtgName} - Could not find required columns`;
@@ -1268,6 +1267,9 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             const labels = [];
             const actualPower = [];
             const expectedPower = [];
+            const inWindow = [];
+            let windowStart = -1;
+            let windowEnd = -1;
             
             for (let i = 1; i < data.length; i++) {
                 const row = data[i];
@@ -1288,6 +1290,14 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 actualPower.push(parseFloat(row[powerIdx]) || null);
                 if (expectedIdx !== -1) {
                     expectedPower.push(parseFloat(row[expectedIdx]) || null);
+                }
+                
+                // Track window boundaries
+                if (inWindowIdx !== -1) {
+                    const isIn = row[inWindowIdx] === true || row[inWindowIdx] === 'True' || row[inWindowIdx] === 'TRUE' || row[inWindowIdx] === 1;
+                    inWindow.push(isIn);
+                    if (isIn && windowStart === -1) windowStart = i - 1;
+                    if (isIn) windowEnd = i - 1;
                 }
             }
             
@@ -1366,7 +1376,26 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                                 },
                                 mode: 'xy',
                             }
-                        }
+                        },
+                        annotation: windowStart >= 0 && windowEnd >= 0 ? {
+                            annotations: {
+                                windowBox: {
+                                    type: 'box',
+                                    xMin: windowStart,
+                                    xMax: windowEnd,
+                                    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                                    borderColor: 'rgba(76, 175, 80, 0.6)',
+                                    borderWidth: 2,
+                                    label: {
+                                        display: true,
+                                        content: 'Selected Window',
+                                        position: 'start',
+                                        color: textColor,
+                                        font: { size: 11 }
+                                    }
+                                }
+                            }
+                        } : {}
                     },
                     scales: {
                         x: {

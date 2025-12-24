@@ -715,14 +715,21 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         if fallback is None:
             diag = build_diagnostic_info()
             diag['Reason'] = 'No feasible 96h/72h window found. Check if categories match and data has enough rows.'
-            return {'wtg': wtg, 'summary': diag, 'data_slice': d.head(0)}
+            # Return full data for charting even on failure
+            full_df = d.copy()
+            full_df['_InWindow'] = False
+            return {'wtg': wtg, 'summary': diag, 'data_slice': full_df, 'window_start': None, 'window_end': None}
         s_idx, e_idx = fallback['start'], fallback['end']
         slice_df, summ = _evaluate_and_summarize(d, ts_col, wtg, power_col, state_col, cat_col,
                                                  s_idx, e_idx, rated_power_kw, bin_minutes,
                                                  nominal_threshold_pct, blocked_set, active_base_set,
                                                  energy_power_col, pr_threshold, air_density_source)
         summ.update({'Mode': mode, 'Status': 'completed_due_to_climatic_conditions', 'Nominal 24h Achieved': False})
-        return {'wtg': wtg, 'summary': summ, 'data_slice': slice_df}
+        # Return full data with window markers
+        full_df = d.copy()
+        full_df['_InWindow'] = False
+        full_df.iloc[s_idx:e_idx+1, full_df.columns.get_loc('_InWindow')] = True
+        return {'wtg': wtg, 'summary': summ, 'data_slice': full_df, 'window_start': s_idx, 'window_end': e_idx}
     
     s_idx, e_idx = chosen['start'], chosen['end']
     slice_df, summ = _evaluate_and_summarize(d, ts_col, wtg, power_col, state_col, cat_col,
@@ -742,7 +749,11 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                  'Nominal 24h Achieved': bool(chosen['contains_3x'] or chosen['contains_1x']),
                  'Contains 24h subwindow >= 3x floor': bool(chosen['contains_3x']),
                  'Contains 24h subwindow >= 1x floor': bool(chosen['contains_1x'])})
-    return {'wtg': wtg, 'summary': summ, 'data_slice': slice_df}
+    # Return full data with window markers for charting
+    full_df = d.copy()
+    full_df['_InWindow'] = False
+    full_df.iloc[s_idx:e_idx+1, full_df.columns.get_loc('_InWindow')] = True
+    return {'wtg': wtg, 'summary': summ, 'data_slice': full_df, 'window_start': s_idx, 'window_end': e_idx}
 
 
 def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
@@ -936,11 +947,9 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             
             if result.get('summary'):
                 summaries.append(result['summary'])
-            # Skip storing large data slices to speed up Excel writing
-            # Only keep first 5 WTGs' data for preview purposes
-            if len(data_sheets) < 5:
-                if isinstance(result.get('data_slice'), pd.DataFrame) and not result['data_slice'].empty:
-                    data_sheets[f"{wtg}_Data"] = result['data_slice']
+            # Store data for all WTGs (chart renders on-demand when selected)
+            if isinstance(result.get('data_slice'), pd.DataFrame) and not result['data_slice'].empty:
+                data_sheets[f"{wtg}_Data"] = result['data_slice']
         
         # Attach alarms to summaries
         alarm_sheets = {}
