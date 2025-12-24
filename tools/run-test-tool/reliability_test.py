@@ -16,7 +16,6 @@ import gc
 import heapq
 import numpy as np
 import pandas as pd
-from scipy.interpolate import RegularGridInterpolator
 
 # Global storage for Excel generation on-demand
 output_excel_bytes = None
@@ -162,16 +161,10 @@ def interpolate_power_curve(curve_arrays, wind_speed: float, air_density: float)
 
 
 def compute_expected_power(ws_series: pd.Series, ad_series: pd.Series, curve_arrays) -> np.ndarray:
-    """Vectorized expected power calculation using scipy interpolation."""
+    """Vectorized expected power calculation using pure numpy bilinear interpolation."""
     ws_grid, ad_grid, grid = curve_arrays
     ws_vals = pd.to_numeric(ws_series, errors='coerce').to_numpy()
     ad_vals = pd.to_numeric(ad_series, errors='coerce').to_numpy()
-    
-    # Create interpolator (wind speed on axis 0, air density on axis 1)
-    interpolator = RegularGridInterpolator(
-        (ws_grid, ad_grid), grid,
-        method='linear', bounds_error=False, fill_value=None
-    )
     
     # Clamp values to grid bounds
     ws_clamped = np.clip(ws_vals, ws_grid.min(), ws_grid.max())
@@ -181,10 +174,44 @@ def compute_expected_power(ws_series: pd.Series, ad_series: pd.Series, curve_arr
     valid_mask = np.isfinite(ws_clamped) & np.isfinite(ad_clamped)
     out = np.full(len(ws_vals), np.nan, dtype=float)
     
-    if valid_mask.any():
-        points = np.column_stack((ws_clamped[valid_mask], ad_clamped[valid_mask]))
-        out[valid_mask] = interpolator(points)
+    if not valid_mask.any():
+        return out
     
+    # Get valid values only
+    ws_v = ws_clamped[valid_mask]
+    ad_v = ad_clamped[valid_mask]
+    
+    # Find indices for interpolation (vectorized)
+    # np.searchsorted finds where values would be inserted
+    i_hi = np.searchsorted(ws_grid, ws_v).clip(1, len(ws_grid) - 1)
+    j_hi = np.searchsorted(ad_grid, ad_v).clip(1, len(ad_grid) - 1)
+    i_lo = i_hi - 1
+    j_lo = j_hi - 1
+    
+    # Get grid values at corners
+    ws_lo = ws_grid[i_lo]
+    ws_hi = ws_grid[i_hi]
+    ad_lo = ad_grid[j_lo]
+    ad_hi = ad_grid[j_hi]
+    
+    # Get power values at 4 corners of each cell
+    q11 = grid[i_lo, j_lo]  # (ws_lo, ad_lo)
+    q12 = grid[i_lo, j_hi]  # (ws_lo, ad_hi)
+    q21 = grid[i_hi, j_lo]  # (ws_hi, ad_lo)
+    q22 = grid[i_hi, j_hi]  # (ws_hi, ad_hi)
+    
+    # Compute interpolation weights
+    # Handle edge case where hi == lo (at grid boundaries)
+    ws_denom = np.where(ws_hi != ws_lo, ws_hi - ws_lo, 1.0)
+    ad_denom = np.where(ad_hi != ad_lo, ad_hi - ad_lo, 1.0)
+    
+    t = np.where(ws_hi != ws_lo, (ws_v - ws_lo) / ws_denom, 0.0)
+    u = np.where(ad_hi != ad_lo, (ad_v - ad_lo) / ad_denom, 0.0)
+    
+    # Bilinear interpolation
+    result = (1 - t) * (1 - u) * q11 + (1 - t) * u * q12 + t * (1 - u) * q21 + t * u * q22
+    
+    out[valid_mask] = result
     return out
 
 
