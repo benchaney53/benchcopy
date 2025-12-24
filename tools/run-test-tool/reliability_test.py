@@ -447,8 +447,10 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
     else:
         interruptions = 0
     
-    test_start_str = pd.to_datetime(slice_df[ts_col].iloc[0]).strftime('%Y-%m-%d %H:%M')
-    test_end_str = pd.to_datetime(slice_df[ts_col].iloc[-1]).strftime('%Y-%m-%d %H:%M')
+    test_start_dt = pd.to_datetime(slice_df[ts_col].iloc[0])
+    test_end_dt = pd.to_datetime(slice_df[ts_col].iloc[-1])
+    test_start_str = test_start_dt.strftime('%Y-%m-%d %H:%M')
+    test_end_str = test_end_dt.strftime('%Y-%m-%d %H:%M')
     active_hours = len(active_idx) * bin_minutes / 60.0
     span_hours = (e_idx - s_idx + 1) * bin_minutes / 60.0
     paused_hours = int((~active_mask).sum()) * bin_minutes / 60.0
@@ -457,17 +459,53 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
 
     # Filter out nan/empty from categories list
     cats_list = [c for c in sorted(cats_norm.unique().tolist()) if c and c.lower() != 'nan']
+    
+    # Calculate 24h nominal power delivery start/end timestamps
+    # Find the first and last bins that contribute to the first 24 nominal hours
+    nominal_bins_needed = int(24.0 * 60.0 / bin_minutes)  # 24 hours worth of bins
+    nominal_active_mask = nominal_valid  # Already filtered to active bins only
+    nominal_indices = np.where(nominal_active_mask)[0]
+    
+    nominal_24h_start_str = ''
+    nominal_24h_end_str = ''
+    if len(nominal_indices) >= nominal_bins_needed:
+        # We have at least 24h of nominal - find the range
+        first_nominal_idx = nominal_indices[0]
+        last_nominal_idx_for_24h = nominal_indices[nominal_bins_needed - 1]
+        nominal_24h_start_str = pd.to_datetime(slice_df[ts_col].iloc[first_nominal_idx]).strftime('%Y-%m-%d %H:%M')
+        nominal_24h_end_str = pd.to_datetime(slice_df[ts_col].iloc[last_nominal_idx_for_24h]).strftime('%Y-%m-%d %H:%M')
+    elif len(nominal_indices) > 0:
+        # We have some nominal but less than 24h - show what we have
+        first_nominal_idx = nominal_indices[0]
+        last_nominal_idx = nominal_indices[-1]
+        nominal_24h_start_str = pd.to_datetime(slice_df[ts_col].iloc[first_nominal_idx]).strftime('%Y-%m-%d %H:%M')
+        nominal_24h_end_str = f"(Only {round(total_nominal_hours, 2)}h nominal)"
+    
+    # Convert energy to MWh
+    total_energy_mwh = total_energy_kwh / 1000.0
 
+    # Build summary with specified column order
+    # User-specified columns first, then remaining columns
     summary = {
         'WTG': wtg,
+        'Availability (%)': round(availability_pct, 2),
+        'Date of Test Start': test_start_dt.strftime('%Y-%m-%d'),
+        'Time of Test Start': test_start_dt.strftime('%H:%M'),
+        'Date of Test End': test_end_dt.strftime('%Y-%m-%d'),
+        'Time of Test End': test_end_dt.strftime('%H:%M'),
+        'Cumulative Time of Testing (h)': round(span_hours, 2),
+        # Events in Window and Event Details will be added later during alarm processing
+        'Date Nominal Power Delivery Began': nominal_24h_start_str.split(' ')[0] if ' ' in nominal_24h_start_str else nominal_24h_start_str,
+        'Time Nominal Power Delivery Began': nominal_24h_start_str.split(' ')[1] if ' ' in nominal_24h_start_str else '',
+        'Date Nominal Power Delivery Ended': nominal_24h_end_str.split(' ')[0] if ' ' in nominal_24h_end_str else nominal_24h_end_str,
+        'Time Nominal Power Delivery Ended': nominal_24h_end_str.split(' ')[1] if ' ' in nominal_24h_end_str else '',
+        'Cumulative Nominal Hours (h)': round(total_nominal_hours, 2),
+        'Total Energy in Window (MWh)': round(total_energy_mwh, 2),
+        # Remaining columns
         'Rated Power (kW)': rated_power_kw,
         'Bin Size (min)': bin_minutes,
         'Active Hours (h)': round(active_hours, 2),
-        'Wall-clock Span (h)': round(span_hours, 2),
         'Paused Hours (h)': round(paused_hours, 2),
-        'Total Energy in Window (kWh)': round(total_energy_kwh, 2),
-        'Availability (time-based, %)': round(availability_pct, 2),
-        'Cumulative Nominal Hours (h)': round(total_nominal_hours, 2),
         'Interruptions (count)': interruptions,
         'Test Start': test_start_str,
         'Test End': test_end_str,
@@ -1168,17 +1206,55 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                         else:
                             alarm_details = ts_strs.tolist()
                         
-                        s['Alarm Details'] = '; '.join(alarm_details)
+                        s['Event Details'] = '; '.join(alarm_details)
                     else:
-                        s['Alarm Details'] = ''
+                        s['Event Details'] = ''
         else:
-            # No alarm file - set empty alarm details for all summaries
+            # No alarm file - set empty event details for all summaries
             for s in summaries:
                 s['Events in Window (Alarm/Warning)'] = 0
-                s['Alarm Details'] = ''
+                s['Event Details'] = ''
         
         elapsed = round(time.time() - t0, 2)
         log(f"Analysis complete in {elapsed}s. Preparing results...")
+        
+        # Reorder summary columns to user's specified order
+        # Priority columns first, then any remaining columns
+        priority_columns = [
+            'WTG',
+            'Availability (%)',
+            'Date of Test Start',
+            'Time of Test Start',
+            'Date of Test End',
+            'Time of Test End',
+            'Cumulative Time of Testing (h)',
+            'Events in Window (Alarm/Warning)',
+            'Event Details',
+            'Date Nominal Power Delivery Began',
+            'Time Nominal Power Delivery Began',
+            'Date Nominal Power Delivery Ended',
+            'Time Nominal Power Delivery Ended',
+            'Cumulative Nominal Hours (h)',
+            'Total Energy in Window (MWh)',
+        ]
+        
+        # Columns to remove
+        remove_columns = {'Min Availability Required'}
+        
+        for s in summaries:
+            # Build reordered summary
+            reordered = {}
+            # Add priority columns first (if they exist in summary)
+            for col in priority_columns:
+                if col in s:
+                    reordered[col] = s[col]
+            # Add remaining columns (except removed ones)
+            for col, val in s.items():
+                if col not in reordered and col not in remove_columns:
+                    reordered[col] = val
+            # Replace the summary dict
+            s.clear()
+            s.update(reordered)
         
         # Cache data for Excel generation
         cached_analysis_data = {
