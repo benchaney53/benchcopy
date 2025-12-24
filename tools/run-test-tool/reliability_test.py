@@ -521,7 +521,9 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         air_series = pd.to_numeric(d[air_col], errors='coerce')
 
     wind_series = pd.to_numeric(d[wind_col], errors='coerce')
-    expected_power = compute_expected_power(wind_series, air_series, power_curve_arrays)
+    expected_power_raw = compute_expected_power(wind_series, air_series, power_curve_arrays)
+    # Apply nominal threshold percentage to expected power
+    expected_power = expected_power_raw * (nominal_threshold_pct / 100.0)
     
     # Normalize sets & arrays
     cats_norm_full = _normalize_category_series(d[cat_col].astype(str))
@@ -981,24 +983,33 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                         alarm_sheets[f'{wtg}_Alarms'] = filtered
         
         # Write output Excel
-        log(f"Writing Excel output with {len(summaries)} summaries...")
+        log(f"Writing Excel output with {len(summaries)} summaries, {len(data_sheets)} data sheets...")
         output_buffer = io.BytesIO()
         with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+            log("Writing Summary sheet...")
             if summaries:
                 pd.DataFrame(summaries).sort_values('WTG').to_excel(writer, sheet_name='Summary', index=False)
             else:
                 pd.DataFrame({'Message': ['No valid windows found']}).to_excel(writer, sheet_name='Summary', index=False)
             
+            log(f"Writing {len(data_sheets)} data sheets...")
+            sheet_count = 0
             for sheet_name, sheet_df in data_sheets.items():
+                sheet_count += 1
+                log(f"  Writing sheet {sheet_count}/{len(data_sheets)}: {sheet_name} ({len(sheet_df)} rows)")
                 sheet_df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
             
             # Add alarm sheets
             if alarm_sheets:
+                log(f"Writing {len(alarm_sheets)} alarm sheets...")
                 for nm, adf in alarm_sheets.items():
                     adf.to_excel(writer, sheet_name=nm[:31], index=False)
                 # Combined alarms sheet
+                log("Writing combined alarms sheet...")
                 all_alarms = pd.concat([adf.assign(_WTG=nm.split('_')[0]) for nm, adf in alarm_sheets.items()], ignore_index=True)
                 all_alarms.to_excel(writer, sheet_name='All_Alarms_Filtered', index=False)
+        
+        log("Finalizing Excel output...")
         
         output_buffer.seek(0)
         output_excel_bytes = output_buffer.read()

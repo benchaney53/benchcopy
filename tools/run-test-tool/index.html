@@ -1193,7 +1193,7 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             });
             html += '<button class="wtg-chart-btn reset-zoom-btn" onclick="resetChartZoom()" title="Reset Zoom"><i class="fa-solid fa-arrows-to-dot"></i> Reset Zoom</button>';
             html += '</div>';
-            html += '<div class="chart-wrapper"><div class="chart-title" id="chart-title">Select a WTG to view chart</div><div class="chart-hint">Scroll to zoom • Drag to select area • Hold Shift + drag to pan</div><div class="chart-canvas-container"><canvas id="power-chart"></canvas></div></div>';
+            html += '<div class="chart-wrapper"><div class="chart-title" id="chart-title">Select a WTG to view chart</div><div class="chart-hint">Scroll to zoom dates • Drag to pan • Shift + drag to select area</div><div class="chart-canvas-container"><canvas id="power-chart"></canvas></div></div>';
             
             bodyContainer.innerHTML = html;
             
@@ -1281,12 +1281,11 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 {
                     label: 'Actual Power (kW)',
                     data: actualPower,
+                    backgroundColor: 'rgba(76, 175, 80, 0.7)',
                     borderColor: '#4CAF50',
-                    backgroundColor: 'rgba(76, 175, 80, 0.1)',
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                    fill: false,
-                    tension: 0.1
+                    borderWidth: 1,
+                    barPercentage: 1.0,
+                    categoryPercentage: 1.0
                 }
             ];
             
@@ -1294,17 +1293,16 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 datasets.push({
                     label: 'Expected Power (kW)',
                     data: expectedPower,
+                    backgroundColor: 'rgba(255, 152, 0, 0.7)',
                     borderColor: '#FF9800',
-                    backgroundColor: 'rgba(255, 152, 0, 0.1)',
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                    fill: false,
-                    tension: 0.1
+                    borderWidth: 1,
+                    barPercentage: 1.0,
+                    categoryPercentage: 1.0
                 });
             }
             
             const chart = new Chart(ctx, {
-                type: 'line',
+                type: 'bar',
                 data: {
                     labels: labels,
                     datasets: datasets
@@ -1330,22 +1328,25 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                         zoom: {
                             pan: {
                                 enabled: true,
-                                mode: 'xy',
+                                mode: 'x',
+                                modifierKey: null,
                             },
                             zoom: {
                                 wheel: {
                                     enabled: true,
+                                    modifierKey: null,
                                 },
                                 pinch: {
                                     enabled: true
                                 },
                                 drag: {
                                     enabled: true,
+                                    modifierKey: 'shift',
                                     backgroundColor: 'rgba(136, 176, 255, 0.25)',
                                     borderColor: 'rgba(136, 176, 255, 0.8)',
                                     borderWidth: 1
                                 },
-                                mode: 'xy',
+                                mode: 'x',
                             }
                         },
                         annotation: windowStart >= 0 && windowEnd >= 0 ? {
@@ -1379,6 +1380,7 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                             grid: { color: gridColor }
                         },
                         y: {
+                            beginAtZero: true,
                             ticks: { color: textColor },
                             grid: { color: gridColor },
                             title: {
@@ -1387,9 +1389,33 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                                 color: textColor
                             }
                         }
+                    },
+                    // Update Y-axis to fit visible data when zooming/panning X-axis
+                    onZoom: function() {
+                        updateYAxisRange(chart);
+                    },
+                    onPan: function() {
+                        updateYAxisRange(chart);
                     }
                 }
             });
+            
+            // Function to update Y-axis based on visible data
+            function updateYAxisRange(chartInstance) {
+                const xScale = chartInstance.scales.x;
+                const minIndex = Math.max(0, Math.floor(xScale.min));
+                const maxIndex = Math.min(labels.length - 1, Math.ceil(xScale.max));
+                
+                let maxVal = 0;
+                for (let i = minIndex; i <= maxIndex; i++) {
+                    if (actualPower[i] !== null && actualPower[i] > maxVal) maxVal = actualPower[i];
+                    if (expectedPower[i] !== null && expectedPower[i] !== undefined && expectedPower[i] > maxVal) maxVal = expectedPower[i];
+                }
+                
+                // Add 10% padding
+                chartInstance.options.scales.y.max = maxVal * 1.1;
+                chartInstance.update('none');
+            }
             
             window.activeCharts = [chart];
         }
