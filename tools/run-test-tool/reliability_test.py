@@ -875,6 +875,11 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         print(f"[Python] {msg}")
     
     try:
+        # Initialize these early so they exist even if exceptions occur
+        summaries = []
+        data_sheets = {}
+        alarm_sheets = {}
+        
         log(f"Starting analysis of {file_name} ({len(file_bytes)} bytes)")
         
         # Read SCADA file
