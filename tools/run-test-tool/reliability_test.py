@@ -1180,9 +1180,12 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         elapsed = round(time.time() - t0, 2)
         log(f"Analysis complete in {elapsed}s. Preparing results...")
         
-        # Clear cached data - Excel generation not commonly used
-        # Report viewing only needs summaries_json and chart_data which are already built
-        cached_analysis_data = None
+        # Cache data for Excel generation
+        cached_analysis_data = {
+            'summaries': summaries,
+            'data_sheets': data_sheets,
+            'alarm_sheets': alarm_sheets
+        }
         output_excel_bytes = None
         
         # Convert summaries to JSON-serializable format
@@ -1245,14 +1248,6 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         # Count alarm events before cleanup
         alarm_events_total = sum(len(adf) for adf in alarm_sheets.values()) if alarm_sheets else 0
         alarms_were_processed = alarm_df is not None
-        
-        # Aggressive memory cleanup - delete all heavy DataFrames
-        data_sheets.clear()
-        if alarm_sheets:
-            alarm_sheets.clear()
-        
-        # Force garbage collection
-        gc.collect()
         
         return json.dumps({
             'success': True,
