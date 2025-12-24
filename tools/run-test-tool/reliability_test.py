@@ -1197,21 +1197,6 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         cached_analysis_data = None
         output_excel_bytes = None
         
-        # Aggressive memory cleanup - delete all heavy DataFrames
-        del data_sheets
-        if alarm_sheets:
-            alarm_sheets.clear()
-        del alarm_sheets
-        if 'df' in dir():
-            del df
-        if 'raw_df' in dir():
-            del raw_df
-        if 'alarm_df' in dir() and alarm_df is not None:
-            del alarm_df
-        
-        # Force garbage collection
-        gc.collect()
-        
         # Convert summaries to JSON-serializable format
         summaries_json = []
         for s in summaries:
@@ -1269,8 +1254,17 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 # Clear sample_df after serialization
                 del sample_df
         
-        # Clear data_sheets now that chart_data is built
+        # Count alarm events before cleanup
+        alarm_events_total = sum(len(adf) for adf in alarm_sheets.values()) if alarm_sheets else 0
+        alarms_were_processed = alarm_df is not None
+        
+        # Aggressive memory cleanup - delete all heavy DataFrames
         data_sheets.clear()
+        if alarm_sheets:
+            alarm_sheets.clear()
+        
+        # Force garbage collection
+        gc.collect()
         
         return json.dumps({
             'success': True,
@@ -1279,8 +1273,8 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             'bin_minutes': bin_minutes,
             'processing_time': elapsed,
             'wtgs': wtgs,
-            'alarms_processed': alarm_df is not None,
-            'alarm_events_total': sum(len(adf) for adf in alarm_sheets.values()) if alarm_sheets else 0,
+            'alarms_processed': alarms_were_processed,
+            'alarm_events_total': alarm_events_total,
             'summaries': summaries_json,
             'chart_data': chart_data
         })
