@@ -1186,26 +1186,51 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                             keep_event_types=keep_event_types, sev_col=sev_a,
                             min_severity=min_severity
                         )
-                        cand['alarm_count'] = len(filtered)
-                        # Store alarm details for each candidate
+                        
+                        # Count alarms vs warnings separately
+                        alarm_count = 0
+                        warning_count = 0
+                        if type_a and type_a in filtered.columns:
+                            for _, row in filtered.iterrows():
+                                etype = str(row.get(type_a, '')).lower()
+                                if 'alarm' in etype:
+                                    alarm_count += 1
+                                elif 'warning' in etype:
+                                    warning_count += 1
+                                else:
+                                    # Default to alarm if unclear
+                                    alarm_count += 1
+                        else:
+                            # No type column - count all as alarms
+                            alarm_count = len(filtered)
+                        
+                        cand['alarm_count'] = alarm_count
+                        cand['warning_count'] = warning_count
+                        cand['event_count'] = alarm_count + warning_count
+                        
+                        # Store event details for each candidate
                         cand['alarm_details'] = []
                         if not filtered.empty:
                             for _, row in filtered.head(20).iterrows():  # Limit to 20 for display
                                 alarm_ts = pd.to_datetime(row[ts_a]).strftime('%Y-%m-%d %H:%M') if pd.notna(row[ts_a]) else 'Unknown'
                                 desc = str(row.get('Description', row.get('Message', row.get(type_a, 'Unknown'))))[:100]
-                                cand['alarm_details'].append({'timestamp': alarm_ts, 'description': desc})
+                                etype = str(row.get(type_a, 'Unknown')) if type_a else 'Unknown'
+                                cand['alarm_details'].append({'timestamp': alarm_ts, 'description': desc, 'event_type': etype})
                     
-                    # Re-sort candidates: prioritize fewer alarms, then by original criteria
+                    # Re-sort candidates: prioritize fewer events (alarms first, then warnings)
                     def alarm_aware_score(c):
                         meets_nominal = 0 if c['nominal_hours'] >= 24.0 else 1
                         pr_tier = 0 if c['contains_3x'] else (1 if c['contains_1x'] else 2)
-                        return (meets_nominal, pr_tier, c['alarm_count'], c['wall_clock_bins'], c['start'])
+                        # Sort by alarms first, then warnings
+                        return (meets_nominal, pr_tier, c['alarm_count'], c['warning_count'], c['wall_clock_bins'], c['start'])
                     
                     candidates.sort(key=alarm_aware_score)
                 else:
-                    # No alarm data - set alarm_count to 0 for all candidates
+                    # No alarm data - set counts to 0 for all candidates
                     for cand in explorer_cands:
                         cand['alarm_count'] = 0
+                        cand['warning_count'] = 0
+                        cand['event_count'] = 0
                         cand['alarm_details'] = []
                 
                 # Store top 10 candidates for window explorer (JSON serializable)
@@ -1224,6 +1249,8 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                         'availability_pct': round(cand['availability_pct'], 1),
                         'energy_mwh': round(cand['energy_kwh'] / 1000.0, 2),
                         'alarm_count': cand.get('alarm_count', 0),
+                        'warning_count': cand.get('warning_count', 0),
+                        'event_count': cand.get('event_count', 0),
                         'alarm_details': cand.get('alarm_details', []),
                         'energy_floor': '3x' if cand['contains_3x'] else ('1x' if cand['contains_1x'] else 'none'),
                         'viable': cand.get('viable', True),
@@ -1249,7 +1276,7 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 c_active = best_cand['active_bins'] * bin_minutes / 60.0
                 c_wall = best_cand['wall_clock_bins'] * bin_minutes / 60.0
                 energy_floor = "3x" if best_cand['contains_3x'] else ("1x" if best_cand['contains_1x'] else "none")
-                alarm_info = f", alarms={best_cand['alarm_count']}" if alarm_df is not None else ""
+                alarm_info = f", alarms={best_cand.get('alarm_count', 0)}, warnings={best_cand.get('warning_count', 0)}" if alarm_df is not None else ""
                 
                 # Check min energy requirement at the end
                 energy_mwh = best_cand['energy_kwh'] / 1000.0

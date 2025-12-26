@@ -308,7 +308,16 @@
         .candidate-rank { font-weight: 700; font-size: 1.1rem; color: var(--accent-color); }
         .candidate-alarms { padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
         .candidate-alarms.zero { background: rgba(90, 144, 104, 0.3); color: var(--success-color); }
-        .candidate-alarms.has-alarms { background: rgba(245, 158, 11, 0.3); color: var(--warning-color); }
+        .candidate-alarms.has-alarms { background: rgba(220, 53, 69, 0.3); color: var(--error-color); }
+        .candidate-alarms.has-warnings { background: rgba(245, 158, 11, 0.3); color: var(--warning-color); }
+        .candidate-events { display: flex; gap: 0.5rem; align-items: center; }
+        .event-badge { padding: 0.2rem 0.5rem; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+        .event-badge.alarm { background: rgba(220, 53, 69, 0.3); color: var(--error-color); }
+        .event-badge.warning { background: rgba(245, 158, 11, 0.3); color: var(--warning-color); }
+        .event-badge.zero { background: rgba(90, 144, 104, 0.3); color: var(--success-color); }
+        .alarm-details-list .event-type { font-weight: 600; margin-right: 0.5rem; }
+        .alarm-details-list .event-type.alarm { color: var(--error-color); }
+        .alarm-details-list .event-type.warning { color: var(--warning-color); }
         .candidate-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.5rem; font-size: 0.85rem; }
         .candidate-stat { display: flex; flex-direction: column; }
         .candidate-stat-label { color: #888; font-size: 0.75rem; }
@@ -1288,8 +1297,23 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 card.classList.add('not-viable');
             }
             
-            const alarmClass = cand.alarm_count === 0 ? 'zero' : 'has-alarms';
-            const alarmText = cand.alarm_count === 0 ? '0 Alarms' : `${cand.alarm_count} Alarm${cand.alarm_count > 1 ? 's' : ''}`;
+            // Build event badges (separate alarms and warnings)
+            const alarmCount = cand.alarm_count || 0;
+            const warningCount = cand.warning_count || 0;
+            const totalEvents = alarmCount + warningCount;
+            
+            let eventBadges = '';
+            if (totalEvents === 0) {
+                eventBadges = '<span class="event-badge zero">0 Events</span>';
+            } else {
+                if (alarmCount > 0) {
+                    eventBadges += `<span class="event-badge alarm">${alarmCount} Alarm${alarmCount > 1 ? 's' : ''}</span>`;
+                }
+                if (warningCount > 0) {
+                    eventBadges += `<span class="event-badge warning">${warningCount} Warning${warningCount > 1 ? 's' : ''}</span>`;
+                }
+            }
+            
             const viableBadge = isViable 
                 ? '<span class="viable-badge pass">Viable</span>' 
                 : '<span class="viable-badge fail">Not Viable</span>';
@@ -1297,7 +1321,7 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             card.innerHTML = `
                 <div class="candidate-header">
                     <span class="candidate-rank">#${idx + 1}${viableBadge}</span>
-                    <span class="candidate-alarms ${alarmClass}">${alarmText}</span>
+                    <div class="candidate-events">${eventBadges}</div>
                 </div>
                 <div class="candidate-stats">
                     <div class="candidate-stat">
@@ -1336,7 +1360,12 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 ` : ''}
                 ${cand.alarm_details && cand.alarm_details.length > 0 ? `
                     <ul class="alarm-details-list">
-                        ${cand.alarm_details.slice(0, 5).map(a => `<li>${a.timestamp} - ${a.description}</li>`).join('')}
+                        ${cand.alarm_details.slice(0, 5).map(a => {
+                            const eventType = (a.event_type || 'Event').toLowerCase();
+                            const typeClass = eventType.includes('alarm') ? 'alarm' : (eventType.includes('warning') ? 'warning' : '');
+                            const typeLabel = eventType.includes('alarm') ? 'ALARM' : (eventType.includes('warning') ? 'WARNING' : 'EVENT');
+                            return `<li><span class="event-type ${typeClass}">[${typeLabel}]</span>${a.timestamp} - ${a.description}</li>`;
+                        }).join('')}
                         ${cand.alarm_details.length > 5 ? `<li>... and ${cand.alarm_details.length - 5} more</li>` : ''}
                     </ul>
                 ` : ''}
