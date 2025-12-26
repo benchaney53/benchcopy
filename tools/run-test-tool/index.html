@@ -296,6 +296,14 @@
         body.light-mode .candidate-card { background: rgba(0,0,0,0.02); }
         .candidate-card:hover { border-color: var(--accent-color); background: rgba(136, 176, 255, 0.1); }
         .candidate-card.selected { border-color: var(--success-color); border-width: 2px; background: rgba(90, 144, 104, 0.1); }
+        .candidate-card.not-viable { opacity: 0.7; border-color: var(--error-color); border-style: dashed; }
+        .candidate-card.not-viable:hover { background: rgba(220, 53, 69, 0.1); border-color: var(--error-color); }
+        .candidate-issues { margin-top: 0.5rem; padding: 0.5rem; background: rgba(220, 53, 69, 0.15); border-radius: 4px; font-size: 0.8rem; color: var(--error-color); }
+        .candidate-issues ul { margin: 0; padding-left: 1.25rem; }
+        .candidate-issues li { margin-bottom: 0.25rem; }
+        .viable-badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; margin-left: 0.5rem; }
+        .viable-badge.pass { background: rgba(90, 144, 104, 0.3); color: var(--success-color); }
+        .viable-badge.fail { background: rgba(220, 53, 69, 0.3); color: var(--error-color); }
         .candidate-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
         .candidate-rank { font-weight: 700; font-size: 1.1rem; color: var(--accent-color); }
         .candidate-alarms { padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
@@ -1274,12 +1282,21 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             card.className = 'candidate-card';
             card.dataset.index = idx;
             
+            // Check if window is viable
+            const isViable = cand.viable !== false;
+            if (!isViable) {
+                card.classList.add('not-viable');
+            }
+            
             const alarmClass = cand.alarm_count === 0 ? 'zero' : 'has-alarms';
             const alarmText = cand.alarm_count === 0 ? '0 Alarms' : `${cand.alarm_count} Alarm${cand.alarm_count > 1 ? 's' : ''}`;
+            const viableBadge = isViable 
+                ? '<span class="viable-badge pass">Viable</span>' 
+                : '<span class="viable-badge fail">Not Viable</span>';
             
             card.innerHTML = `
                 <div class="candidate-header">
-                    <span class="candidate-rank">#${idx + 1}</span>
+                    <span class="candidate-rank">#${idx + 1}${viableBadge}</span>
                     <span class="candidate-alarms ${alarmClass}">${alarmText}</span>
                 </div>
                 <div class="candidate-stats">
@@ -1312,6 +1329,11 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                         <span class="candidate-stat-value">${cand.energy_floor}</span>
                     </div>
                 </div>
+                ${!isViable && cand.issues && cand.issues.length > 0 ? `
+                    <div class="candidate-issues">
+                        <ul>${cand.issues.map(issue => `<li>${issue}</li>`).join('')}</ul>
+                    </div>
+                ` : ''}
                 ${cand.alarm_details && cand.alarm_details.length > 0 ? `
                     <ul class="alarm-details-list">
                         ${cand.alarm_details.slice(0, 5).map(a => `<li>${a.timestamp} - ${a.description}</li>`).join('')}

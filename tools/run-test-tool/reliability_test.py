@@ -792,17 +792,33 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     # Don't break early - we want to find the globally best window
     step_bins = int(round(2 * 60 / bin_minutes))  # 2-hour increments
     MAX_VALID_CANDIDATES = 100  # Keep enough candidates for alarm filtering
+    MAX_EXPLORER_CANDIDATES = 50  # Keep more for Window Explorer (includes non-viable)
     all_valid_candidates = []
+    all_explorer_candidates = []  # For Window Explorer - includes non-viable windows
     
     for target_bins in range(target72, max_target + 1, step_bins):
         cands = best_by_priority_active(target_bins, req_mwh_1x, req_mwh_3x, log_func=None)  # No per-target logging
         if cands:
             for cand in cands:
+                # Add timestamp info for all candidates
+                cand['test_start'] = d.iloc[cand['start']][ts_col]
+                cand['test_end'] = d.iloc[cand['end']][ts_col]
+                cand['target_bins'] = target_bins
+                
+                # Determine viability and issues
+                issues = []
+                if cand['nominal_hours'] < MIN_NOMINAL_HOURS_REQUIRED:
+                    issues.append(f"Nominal {cand['nominal_hours']:.1f}h < 24h required")
+                if cand['availability_pct'] < min_availability_pct:
+                    issues.append(f"Availability {cand['availability_pct']:.1f}% < {min_availability_pct}% required")
+                cand['viable'] = len(issues) == 0
+                cand['issues'] = issues
+                
+                # Add to explorer list (all candidates)
+                all_explorer_candidates.append(cand)
+                
+                # Add to valid list only if meets requirements
                 if cand['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED:
-                    # Add timestamp info for alarm filtering
-                    cand['test_start'] = d.iloc[cand['start']][ts_col]
-                    cand['test_end'] = d.iloc[cand['end']][ts_col]
-                    cand['target_bins'] = target_bins
                     all_valid_candidates.append(cand)
     
     # Sort all candidates by score and keep top MAX_VALID_CANDIDATES
@@ -813,6 +829,16 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     
     all_valid_candidates.sort(key=final_score)
     valid_candidates = all_valid_candidates[:MAX_VALID_CANDIDATES]
+    
+    # Sort explorer candidates: viable first, then by score
+    def explorer_score(c):
+        viable_priority = 0 if c.get('viable', False) else 1
+        meets_nominal = 0 if c['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED else 1
+        pr_tier = 0 if c['contains_3x'] else (1 if c['contains_1x'] else 2)
+        return (viable_priority, meets_nominal, pr_tier, c['wall_clock_bins'], c['start'])
+    
+    all_explorer_candidates.sort(key=explorer_score)
+    explorer_candidates = all_explorer_candidates[:MAX_EXPLORER_CANDIDATES]
     
     # If no window meets requirement, try the max extension as fallback
     fallback = None
@@ -934,6 +960,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         return {
             'wtg': wtg,
             'candidates': valid_candidates,
+            'explorer_candidates': explorer_candidates,  # All candidates for Window Explorer
             'finalize': finalize_result,
             'full_data': d,
             'ts_col': ts_col
@@ -1142,14 +1169,15 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             # Handle results with multiple candidates (for alarm-based selection)
             if 'candidates' in result:
                 candidates = result['candidates']
+                explorer_cands = result.get('explorer_candidates', candidates)  # All candidates for explorer
                 finalize_func = result['finalize']
                 
                 # If we have alarm data, count alarms for each candidate and prefer windows with 0 alarms
                 if alarm_df is not None and alarm_cols[0] is not None:
                     ts_a, unit_a, type_a, sev_a = alarm_cols
                     
-                    # Count alarms for each candidate
-                    for cand in candidates:
+                    # Count alarms for ALL candidates (including non-viable for explorer)
+                    for cand in explorer_cands:
                         start = pd.to_datetime(cand['test_start'])
                         end = pd.to_datetime(cand['test_end'])
                         filtered = filter_alarm_log_for_window(
@@ -1176,13 +1204,14 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                     candidates.sort(key=alarm_aware_score)
                 else:
                     # No alarm data - set alarm_count to 0 for all candidates
-                    for cand in candidates:
+                    for cand in explorer_cands:
                         cand['alarm_count'] = 0
                         cand['alarm_details'] = []
                 
                 # Store top 10 candidates for window explorer (JSON serializable)
+                # Use explorer_cands which includes non-viable windows
                 top_candidates = []
-                for idx, cand in enumerate(candidates[:10]):
+                for idx, cand in enumerate(explorer_cands[:10]):
                     start_ts = pd.to_datetime(cand['test_start'])
                     end_ts = pd.to_datetime(cand['test_end'])
                     top_candidates.append({
@@ -1194,9 +1223,11 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                         'nominal_hours': round(cand['nominal_hours'], 1),
                         'availability_pct': round(cand['availability_pct'], 1),
                         'energy_mwh': round(cand['energy_kwh'] / 1000.0, 2),
-                        'alarm_count': cand['alarm_count'],
+                        'alarm_count': cand.get('alarm_count', 0),
                         'alarm_details': cand.get('alarm_details', []),
-                        'energy_floor': '3x' if cand['contains_3x'] else ('1x' if cand['contains_1x'] else 'none')
+                        'energy_floor': '3x' if cand['contains_3x'] else ('1x' if cand['contains_1x'] else 'none'),
+                        'viable': cand.get('viable', True),
+                        'issues': cand.get('issues', [])
                     })
                 wtg_candidates[wtg] = top_candidates
                 
