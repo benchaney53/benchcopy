@@ -429,21 +429,19 @@
                 <label>Rated Power (kW)</label>
                 <input type="number" id="rated-power" value="4500" min="100" step="100">
             </div>
-        </div>
-        <div class="form-row">
             <div class="form-group">
                 <label>Test Hours</label>
                 <input type="number" id="test-hours" value="72" min="1">
-            </div>
-            <div class="form-group">
-                <label>Extension Hours</label>
-                <input type="number" id="extension-hours" value="24" min="0">
             </div>
         </div>
         <div class="form-row">
             <div class="form-group">
                 <label>Nominal Threshold %</label>
                 <input type="number" id="nominal-threshold" value="99" min="0" max="100" step="1">
+            </div>
+            <div class="form-group">
+                <label>Extension Hours</label>
+                <input type="number" id="extension-hours" value="24" min="0">
             </div>
             <div class="form-group">
                 <label>Energy Source</label>
@@ -1606,13 +1604,24 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
 
         // Toggle switch functionality
         function setupToggleSwitches() {
-            // Availability toggle controls its input
+            // Availability toggle controls only its percentage input
             const availToggle = document.getElementById('require-availability');
             const availInput = document.getElementById('min-availability');
             availToggle.addEventListener('change', function() {
                 availInput.disabled = !this.checked;
             });
             availInput.disabled = !availToggle.checked;
+            
+            // Nominal toggle controls Extension Hours and Nominal Threshold
+            const nominalToggle = document.getElementById('require-nominal');
+            const extensionHoursInput = document.getElementById('extension-hours');
+            const nominalThresholdInput = document.getElementById('nominal-threshold');
+            nominalToggle.addEventListener('change', function() {
+                extensionHoursInput.disabled = !this.checked;
+                nominalThresholdInput.disabled = !this.checked;
+            });
+            extensionHoursInput.disabled = !nominalToggle.checked;
+            nominalThresholdInput.disabled = !nominalToggle.checked;
             
             // Energy toggle controls its input
             const energyToggle = document.getElementById('require-energy');
