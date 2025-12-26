@@ -1176,8 +1176,16 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 if alarm_df is not None and alarm_cols[0] is not None:
                     ts_a, unit_a, type_a, sev_a = alarm_cols
                     
-                    # Count alarms for ALL candidates (including non-viable for explorer)
-                    for cand in explorer_cands:
+                    # Count alarms for ALL candidates (both valid and explorer)
+                    # Use a set to track which candidates we've processed
+                    all_cands_to_process = list(explorer_cands)
+                    processed_ids = set(id(c) for c in all_cands_to_process)
+                    for c in candidates:
+                        if id(c) not in processed_ids:
+                            all_cands_to_process.append(c)
+                            processed_ids.add(id(c))
+                    
+                    for cand in all_cands_to_process:
                         start = pd.to_datetime(cand['test_start'])
                         end = pd.to_datetime(cand['test_end'])
                         filtered = filter_alarm_log_for_window(
@@ -1226,8 +1234,13 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                     
                     candidates.sort(key=alarm_aware_score)
                 else:
-                    # No alarm data - set counts to 0 for all candidates
-                    for cand in explorer_cands:
+                    # No alarm data - set counts to 0 for all candidates (both valid and explorer)
+                    all_cands = list(explorer_cands)
+                    processed_ids = set(id(c) for c in all_cands)
+                    for c in candidates:
+                        if id(c) not in processed_ids:
+                            all_cands.append(c)
+                    for cand in all_cands:
                         cand['alarm_count'] = 0
                         cand['warning_count'] = 0
                         cand['event_count'] = 0
