@@ -415,7 +415,8 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
                             blocked_set: set, active_base_set: set,
                             energy_power_col: str,
                             pr_threshold: float,
-                            air_density_source: str) -> tuple:
+                            air_density_source: str,
+                            air_density_missing_count: int = 0) -> tuple:
     """Evaluate a window and build summary."""
     slice_df = d.iloc[s_idx:e_idx+1].copy()
     cats_norm = _normalize_category_series(slice_df[cat_col].astype(str))
@@ -481,6 +482,13 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
 
     # Build summary with specified column order
     # User-specified columns first, then remaining columns
+    
+    # Build notes list
+    notes = []
+    if air_density_missing_count > 0:
+        notes.append(f"Air density missing for {air_density_missing_count} slots - used 90% rated power threshold for nominal power check")
+    notes_str = '; '.join(notes)
+    
     summary = {
         'WTG': wtg,
         'Availability (%)': round(availability_pct, 2),
@@ -510,6 +518,7 @@ def _evaluate_and_summarize(d: pd.DataFrame, ts_col: str, wtg: str,
         'Average Performance Ratio': round(avg_pr, 3) if np.isfinite(avg_pr) else float('nan'),
         'PR Threshold Used': pr_threshold,
         'Air Density Source': air_density_source,
+        'Notes': notes_str,
     }
     return slice_df, summary
 
@@ -520,13 +529,13 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                      min_availability_pct: float, nominal_threshold_pct: float,
                      allowed_categories: list, disallowed_categories: list,
                      active_base_categories: list, energy_source: str,
-                     mode: str,
+                     require_nominal: bool,
+                     require_energy: bool,
+                     energy_threshold_mwh: float,
                      allowed_window_categories: list,
                      disqualifying_window_categories: list,
                      power_curve_arrays,
                      pr_threshold: float,
-                     air_density_default: float,
-                     air_density_behavior: str,
                      wind_col_hint: str = None,
                      air_density_col_hint: str = None) -> dict:
     """Process a single WTG using optimized algorithm from hotfix."""
@@ -541,7 +550,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     power_col = find_col_with_suffix(d.columns.tolist(), wtg, POWER_SUFFIX_CANDIDATES, seps)
     if power_col is None:
         log_proc(f"  FAILED: No power column found. Looking for suffix in {POWER_SUFFIX_CANDIDATES}")
-        return {'wtg': wtg, 'summary': {'WTG': wtg, 'Mode': mode, 'Status': 'FAILED',
+        return {'wtg': wtg, 'summary': {'WTG': wtg, 'Status': 'FAILED',
                                         'Reason': f'No power column found for {wtg}'}, 'data_slice': d.head(0)}
     
     total_active_col = find_col_with_suffix(d.columns.tolist(), wtg, ['Total Active power'], seps)
@@ -552,34 +561,41 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     log_proc(f"  Resolved columns: power={power_col}, state={state_col}, cat={cat_col}")
     
     if cat_col not in d.columns:
-        return {'wtg': wtg, 'summary': {'WTG': wtg, 'Mode': mode, 'Status': 'FAILED',
+        return {'wtg': wtg, 'summary': {'WTG': wtg, 'Status': 'FAILED',
                                         'Reason': f'No category column found for {wtg}'}, 'data_slice': d.head(0)}
 
     wind_col = wind_col_hint if (wind_col_hint and wind_col_hint in d.columns) else find_col_with_suffix(d.columns.tolist(), wtg, WIND_SPEED_SUFFIX_CANDIDATES, seps)
     if wind_col is None:
-        return {'wtg': wtg, 'summary': {'WTG': wtg, 'Mode': mode, 'Status': 'FAILED',
+        return {'wtg': wtg, 'summary': {'WTG': wtg, 'Status': 'FAILED',
                                         'Reason': f'No wind speed column found for {wtg}'}, 'data_slice': d.head(0)}
 
+    # Handle air density - if missing, use 90% rated power for those slots and track for notes
     air_col = air_density_col_hint if (air_density_col_hint and air_density_col_hint in d.columns) else find_col_with_suffix(d.columns.tolist(), wtg, AIR_DENSITY_SUFFIX_CANDIDATES, seps)
     air_density_source = 'column'
+    air_density_missing_count = 0
     if air_col is None:
-        if air_density_behavior == 'default':
-            air_density_source = f'default {air_density_default}'
-            air_series = pd.Series([air_density_default] * len(d), index=d.index)
-        elif air_density_behavior == 'prompt':
-            raise MissingAirDensityError(wtg, d.columns.tolist())
-        else:
-            return {'wtg': wtg, 'summary': {'WTG': wtg, 'Mode': mode, 'Status': 'FAILED',
-                                            'Reason': f'No air density column found for {wtg}'}, 'data_slice': d.head(0)}
+        # No air density column at all - all rows will use 90% fallback for nominal calculation
+        air_density_source = 'missing_all'
+        air_series = pd.Series([np.nan] * len(d), index=d.index)
+        air_density_missing_count = len(d)
+        log_proc(f"  Air density column not found - will use 90% rated power threshold for all slots")
     else:
         air_series = pd.to_numeric(d[air_col], errors='coerce')
+        # Track missing values within the column
+        air_density_missing_count = int(air_series.isna().sum())
+        if air_density_missing_count > 0:
+            air_density_source = f'column_with_{air_density_missing_count}_missing'
+            log_proc(f"  Air density column found but has {air_density_missing_count} missing values")
     
-    log_proc(f"  Wind/Air columns: wind={wind_col}, air={air_col or 'DEFAULT'}")
+    log_proc(f"  Wind/Air columns: wind={wind_col}, air={air_col or 'MISSING'}")
 
     wind_series = pd.to_numeric(d[wind_col], errors='coerce')
     expected_power_raw = compute_expected_power(wind_series, air_series, power_curve_arrays)
     # Apply nominal threshold percentage to expected power
     expected_power = expected_power_raw * (nominal_threshold_pct / 100.0)
+    
+    # Track which rows have missing air density for using 90% rated power fallback
+    air_density_missing_mask = air_series.isna().to_numpy()
     
     # Normalize sets & arrays
     cats_norm_full = _normalize_category_series(d[cat_col].astype(str))
@@ -595,9 +611,18 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     # Precompute prefix sums and performance ratio based nominal flags
     pwr = pd.to_numeric(d[power_col], errors='coerce').to_numpy()
     perf_ratio = np.divide(pwr, expected_power, out=np.full_like(expected_power, np.nan), where=np.isfinite(expected_power))
-    threshold_kw = rated_power_kw * (nominal_threshold_pct / 100.0)
-    fallback_nominal = np.isfinite(pwr) & (pwr >= threshold_kw)
-    nominal_full = np.where(np.isfinite(perf_ratio), perf_ratio >= pr_threshold, fallback_nominal)
+    
+    # For rows with air density, use PR-based nominal; for missing air density, use 90% rated power
+    threshold_kw_normal = rated_power_kw * (nominal_threshold_pct / 100.0)
+    threshold_kw_missing_air = rated_power_kw * 0.90  # 90% rated power for missing air density
+    
+    # Normal nominal check (PR-based with fallback to threshold)
+    normal_nominal = np.where(np.isfinite(perf_ratio), perf_ratio >= pr_threshold, np.isfinite(pwr) & (pwr >= threshold_kw_normal))
+    # Missing air density uses 90% rated power threshold
+    missing_air_nominal = np.isfinite(pwr) & (pwr >= threshold_kw_missing_air)
+    
+    # Combine: use missing_air logic where air density is missing, otherwise use normal logic
+    nominal_full = np.where(air_density_missing_mask, missing_air_nominal, normal_nominal)
     
     # DATA FINGERPRINT - unique identifier for this WTG's data to verify isolation
     power_sum = float(np.nansum(pwr))
@@ -607,12 +632,15 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     log_proc(f"  DATA FINGERPRINT: power_sum={power_sum:.1f}, power_mean={power_mean:.1f}, wind_mean={wind_mean:.2f}")
     log_proc(f"  Top categories: {cat_counts}")
     log_proc(f"  Active bins: {int(active_full.sum())}, Paused: {int(paused_full.sum())}, Unavail: {int(unavail_full.sum())}")
+    if air_density_missing_count > 0:
+        log_proc(f"  Air density missing for {air_density_missing_count} slots - using 90% rated power ({threshold_kw_missing_air:.0f} kW) threshold")
     
     d['_WindSpeed'] = wind_series
-    d['_AirDensityUsed'] = air_series if air_col is not None else pd.Series([air_density_default] * len(d), index=d.index)
+    d['_AirDensityUsed'] = air_series
     d['_ExpectedPower'] = expected_power
     d['_PerformanceRatio'] = perf_ratio
     d['_NominalFlag'] = nominal_full
+    d['_AirDensityMissing'] = air_density_missing_mask
 
     energy_full_kw = pd.to_numeric(d[energy_power_col], errors='coerce').fillna(0.0).to_numpy()
     e_kwh_per_row = energy_full_kw * (bin_minutes / 60.0)
@@ -875,7 +903,6 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         
         diag = {
             'WTG': wtg,
-            'Mode': mode,
             'Status': 'FAILED',
             'Failure Reason': failure_reason,
             'Total Rows': total_rows,
@@ -906,7 +933,8 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         slice_df, summ = _evaluate_and_summarize(d, ts_col, wtg, power_col, state_col, cat_col,
                                                  s_idx, e_idx, rated_power_kw, bin_minutes,
                                                  nominal_threshold_pct, blocked_set, active_base_set,
-                                                 energy_power_col, pr_threshold, air_density_source)
+                                                 energy_power_col, pr_threshold, air_density_source,
+                                                 air_density_missing_count)
         
         # Calculate end timestamp for exactly target72 active bins (for alarm counting)
         # This ensures alarms are only counted for the required test hours, not extensions
@@ -921,20 +949,20 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         test_end_72h_str = pd.to_datetime(d.iloc[test_end_72h_idx][ts_col]).strftime('%Y-%m-%d %H:%M')
         summ['Test End (72h Active)'] = test_end_72h_str
         
-        if chosen['nominal_hours'] < MIN_NOMINAL_HOURS_REQUIRED:
-            summ.update({'Mode': mode, 'Status': 'completed_due_to_climatic_conditions', 'Nominal 24h Achieved': False})
-        else:
+        # Determine status based on nominal hours and energy
+        if not require_nominal or chosen['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED:
             if chosen['contains_3x']:
                 status = 'PASSED (3x floor achieved)'
             elif chosen['contains_1x']:
                 status = 'PASSED (1x floor achieved)'
             else:
                 status = 'PASSED'
-            summ.update({'Mode': mode,
-                         'Status': status,
+            summ.update({'Status': status,
                          'Nominal 24h Achieved': bool(chosen['contains_3x'] or chosen['contains_1x']),
                          'Contains 24h subwindow >= 3x floor': bool(chosen['contains_3x']),
                          'Contains 24h subwindow >= 1x floor': bool(chosen['contains_1x'])})
+        else:
+            summ.update({'Status': 'completed_due_to_climatic_conditions', 'Nominal 24h Achieved': False})
         
         full_df = d.copy()
         full_df['_InWindow'] = False
@@ -1056,8 +1084,6 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         disqualifying_window_categories = [x.strip() for x in params.get('disqualifying_window_categories', 'Manufacturer,Unscheduled maintenance').split(',') if x.strip()]
 
         pr_threshold = float(params.get('pr_threshold', 0.97))
-        air_density_default = float(params.get('air_density_default', 1.225))
-        air_density_behavior = params.get('air_density_behavior', 'prompt')
         wind_col_hint = params.get('wind_speed_column_hint')
         air_density_col_hint = params.get('air_density_column_hint')
         power_curve_text = params.get('power_curve_text', '') or ''
@@ -1071,12 +1097,17 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         # Energy source
         energy_source = params.get('energy_source', 'power')
         
-        # Mode adjustments
-        mode = params.get('mode', 'm01')
-        if mode == 'reliability':
-            min_availability_pct = 0
-        else:
+        # Toggle-based parameters (replaces mode)
+        require_availability = params.get('require_availability', True)
+        require_nominal = params.get('require_nominal', True)
+        require_energy = params.get('require_energy', True)
+        energy_threshold_mwh = params.get('energy_threshold_mwh', 54.0)
+        
+        # Set min_availability based on toggle
+        if require_availability:
             min_availability_pct = float(params.get('min_availability_pct', 96))
+        else:
+            min_availability_pct = 0
         
         # Load alarm file if provided
         log("Checking for alarm file...")
@@ -1158,25 +1189,16 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                     disallowed_categories=disallowed_categories,
                     active_base_categories=active_base_categories,
                     energy_source=energy_source,
-                    mode=mode,
+                    require_nominal=require_nominal,
+                    require_energy=require_energy,
+                    energy_threshold_mwh=energy_threshold_mwh,
                     allowed_window_categories=allowed_window_categories,
                     disqualifying_window_categories=disqualifying_window_categories,
                     power_curve_arrays=power_curve_arrays,
                     pr_threshold=pr_threshold,
-                    air_density_default=air_density_default,
-                    air_density_behavior=air_density_behavior,
                     wind_col_hint=wind_col_hint,
                     air_density_col_hint=air_density_col_hint
                 )
-            except MissingAirDensityError as ex:
-                return json.dumps({
-                    'success': False,
-                    'need_air_density_choice': True,
-                    'wtg': ex.wtg,
-                    'message': f"Air density column missing for {ex.wtg}. Provide a column name or allow default {air_density_default} kg/m^3.",
-                    'available_columns': ex.available_columns,
-                    'air_density_default': air_density_default
-                })
             
             # Handle results with multiple candidates (for alarm-based selection)
             if 'candidates' in result:
@@ -1330,6 +1352,7 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         # Priority columns first, then any remaining columns
         priority_columns = [
             'WTG',
+            'Energy Pass/Fail',
             'Availability (%)',
             'Date of Test Start',
             'Time of Test Start',
@@ -1348,6 +1371,13 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         remove_columns = {'Min Availability Required'}
         
         for s in summaries:
+            # Add Energy Pass/Fail column based on energy threshold
+            if require_energy and energy_threshold_mwh is not None:
+                total_energy_mwh = s.get('Total Energy in Window (MWh)', 0) or 0
+                s['Energy Pass/Fail'] = 'PASS' if total_energy_mwh >= energy_threshold_mwh else 'FAIL'
+            else:
+                s['Energy Pass/Fail'] = 'N/A (threshold disabled)'
+            
             # Build reordered summary
             reordered = {}
             # Add priority columns first (if they exist in summary)
@@ -1445,14 +1475,6 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             'chart_data': chart_data
         })
         
-    except MissingAirDensityError as ex:
-        return json.dumps({
-            'success': False,
-            'need_air_density_choice': True,
-            'wtg': ex.wtg,
-            'message': f"Air density column missing for {ex.wtg}. Provide a column name or allow default {params.get('air_density_default', 1.225)} kg/m^3.",
-            'available_columns': ex.available_columns,
-        })
     except Exception as e:
         import traceback
         return json.dumps({

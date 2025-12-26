@@ -267,6 +267,22 @@
         .wtg-chart-btn.active { background: var(--accent-color); color: #000; font-weight: 600; }
         .wtg-chart-btn.reset-zoom-btn { background: rgba(253, 126, 20, 0.2); margin-left: auto; }
         .wtg-chart-btn.reset-zoom-btn:hover { background: rgba(253, 126, 20, 0.4); }
+
+        /* Toggle switch styles */
+        .toggle-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+        .toggle-group { display: flex; align-items: center; gap: 0.5rem; background: #2a2a2a; padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); }
+        body.light-mode .toggle-group { background: #f8f9fa; }
+        .toggle-switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #555; border-radius: 24px; transition: 0.3s; }
+        .toggle-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s; }
+        .toggle-switch input:checked + .toggle-slider { background-color: var(--success-color); }
+        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(20px); }
+        .toggle-label { font-size: 0.85rem; color: var(--text-color); white-space: nowrap; }
+        .toggle-input { width: 80px; padding: 6px 8px; background: #1a1a1a; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); font-size: 0.85rem; }
+        body.light-mode .toggle-input { background: white; }
+        .toggle-input:disabled { opacity: 0.5; cursor: not-allowed; }
+        .toggle-unit { font-size: 0.8rem; color: #888; }
     </style>
 </head>
 <body>
@@ -381,14 +397,34 @@
             <div class="card-icon"><i class="fa-solid fa-sliders"></i></div>
             <span class="card-title">Test Parameters</span>
         </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>Mode</label>
-                <select id="mode">
-                    <option value="m01">M01 (72h active)</option>
-                    <option value="reliability">Reliability (informational)</option>
-                </select>
+        <div class="toggle-row">
+            <div class="toggle-group">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="require-availability" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+                <span class="toggle-label">Require Availability</span>
+                <input type="number" id="min-availability" class="toggle-input" value="96" min="0" max="100" step="0.1">
+                <span class="toggle-unit">%</span>
             </div>
+            <div class="toggle-group">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="require-nominal" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+                <span class="toggle-label">Require 24h Nominal Power</span>
+            </div>
+            <div class="toggle-group">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="require-energy" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+                <span class="toggle-label">Require Min Energy</span>
+                <input type="number" id="energy-threshold" class="toggle-input" value="54" min="0" step="1">
+                <span class="toggle-unit">MWh</span>
+            </div>
+        </div>
+        <div class="form-row">
             <div class="form-group">
                 <label>Rated Power (kW)</label>
                 <input type="number" id="rated-power" value="4500" min="100" step="100">
@@ -406,35 +442,15 @@
         </div>
         <div class="form-row">
             <div class="form-group">
-                <label>Min Availability %</label>
-                <input type="number" id="min-availability" value="96" min="0" max="100" step="0.1">
-            </div>
-            <div class="form-group">
                 <label>Nominal Threshold %</label>
                 <input type="number" id="nominal-threshold" value="99" min="0" max="100" step="1">
             </div>
-        </div>
-        <div class="form-row">
             <div class="form-group">
                 <label>Energy Source</label>
                 <select id="energy-source">
                     <option value="power">Power Average</option>
                     <option value="total_active">Total Active Power</option>
                 </select>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>Air Density When Missing</label>
-                <select id="air-density-behavior">
-                    <option value="default" selected>Use default automatically</option>
-                    <option value="prompt">Ask to supply column or default</option>
-                    <option value="fail">Fail if missing</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label>Default Air Density (kg/m³)</label>
-                <input type="number" id="air-density-default" value="1.225" min="0" step="0.001">
             </div>
         </div>
 
@@ -766,8 +782,6 @@
         const viewChartsBtn = document.getElementById('view-charts-btn');
         const clearResultsBtn = document.getElementById('clear-results-btn');
         const loadingOverlay = document.getElementById('pyodide-loading');
-        const airDensityBehaviorEl = document.getElementById('air-density-behavior');
-        const airDensityDefaultEl = document.getElementById('air-density-default');
 
         function log(message, type = '') {
             const line = document.createElement('div');
@@ -1019,13 +1033,19 @@
                 console.log('[RunTest] Both datasets loaded into Pyodide');
                 const minSeverityVal = document.getElementById('alarms-min-severity').value;
                 const nominalThreshold = parseFloat(document.getElementById('nominal-threshold').value);
+                const requireAvailability = document.getElementById('require-availability').checked;
+                const requireNominal = document.getElementById('require-nominal').checked;
+                const requireEnergy = document.getElementById('require-energy').checked;
                 const params = {
-                    mode: document.getElementById('mode').value,
                     rated_power_kw: parseFloat(document.getElementById('rated-power').value),
                     test_hours: parseInt(document.getElementById('test-hours').value),
                     extension_hours: parseInt(document.getElementById('extension-hours').value),
-                    min_availability_pct: parseFloat(document.getElementById('min-availability').value),
+                    require_availability: requireAvailability,
+                    min_availability_pct: requireAvailability ? parseFloat(document.getElementById('min-availability').value) : 0,
+                    require_nominal: requireNominal,
                     nominal_threshold_pct: nominalThreshold,
+                    require_energy: requireEnergy,
+                    energy_threshold_mwh: requireEnergy ? parseFloat(document.getElementById('energy-threshold').value) : null,
                     bin_minutes: document.getElementById('bin-minutes').value || null,
                     energy_source: document.getElementById('energy-source').value,
                     allowed_categories: document.getElementById('allowed-categories').value,
@@ -1041,9 +1061,7 @@
                     air_density_column_hint: 'Ambient Airdensity AirDensityAvg',
                     wind_speed_column_hint: 'Ambient WindSpeed Avg',
                     // PR threshold derived from nominal threshold (e.g., 99% -> 0.99)
-                    pr_threshold: nominalThreshold / 100.0,
-                    air_density_behavior: airDensityBehaviorEl.value,
-                    air_density_default: parseFloat(airDensityDefaultEl.value) || 1.225
+                    pr_threshold: nominalThreshold / 100.0
                 };
                 Object.assign(params, overrides);
                 pyodide.globals.set('params', pyodide.toPy(params));
@@ -1586,9 +1604,29 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
             }
         }
 
+        // Toggle switch functionality
+        function setupToggleSwitches() {
+            // Availability toggle controls its input
+            const availToggle = document.getElementById('require-availability');
+            const availInput = document.getElementById('min-availability');
+            availToggle.addEventListener('change', function() {
+                availInput.disabled = !this.checked;
+            });
+            availInput.disabled = !availToggle.checked;
+            
+            // Energy toggle controls its input
+            const energyToggle = document.getElementById('require-energy');
+            const energyInput = document.getElementById('energy-threshold');
+            energyToggle.addEventListener('change', function() {
+                energyInput.disabled = !this.checked;
+            });
+            energyInput.disabled = !energyToggle.checked;
+        }
+
         window.addEventListener('DOMContentLoaded', () => {
             loadSettings();
             attachSettingsListeners();
+            setupToggleSwitches();
             initPyodide();
         });
     </script>
