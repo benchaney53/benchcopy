@@ -1334,7 +1334,25 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                         keep_event_types=keep_event_types, sev_col=sev_a,
                         min_severity=min_severity
                     )
-                    s['Events in Window (Alarm/Warning)'] = len(filtered)
+                    
+                    # Count alarms vs warnings separately
+                    alarm_count = 0
+                    warning_count = 0
+                    if type_a and type_a in filtered.columns:
+                        for _, row in filtered.iterrows():
+                            etype = str(row.get(type_a, '')).lower()
+                            if 'alarm' in etype:
+                                alarm_count += 1
+                            elif 'warning' in etype:
+                                warning_count += 1
+                            else:
+                                alarm_count += 1  # Default to alarm
+                    else:
+                        alarm_count = len(filtered)
+                    
+                    s['Alarms in Window'] = alarm_count
+                    s['Warnings in Window'] = warning_count
+                    s['Total Events'] = alarm_count + warning_count
                     
                     # Build alarm details string: timestamp - description for each event
                     if not filtered.empty:
@@ -1348,17 +1366,25 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                                 desc_col = cand
                                 break
                         
-                        # Format each alarm as "YYYY-MM-DD HH:MM - Description" using vectorized ops
+                        # Format each alarm as "[TYPE] YYYY-MM-DD HH:MM - Description"
                         ts_strs = pd.to_datetime(filtered[ts_a], errors='coerce').dt.strftime('%Y-%m-%d %H:%M').fillna('Unknown Time')
+                        
+                        # Get event types for labeling
+                        if type_a and type_a in filtered.columns:
+                            etypes = filtered[type_a].astype(str).str.strip().apply(
+                                lambda x: '[ALARM]' if 'alarm' in x.lower() else ('[WARNING]' if 'warning' in x.lower() else '[EVENT]')
+                            )
+                        else:
+                            etypes = pd.Series(['[EVENT]'] * len(filtered), index=filtered.index)
                         
                         if desc_col and desc_col in filtered.columns:
                             descs = filtered[desc_col].astype(str).str.strip()
-                            alarm_details = (ts_strs + ' - ' + descs).tolist()
+                            alarm_details = (etypes + ' ' + ts_strs + ' - ' + descs).tolist()
                         elif type_a and type_a in filtered.columns:
-                            etypes = filtered[type_a].astype(str).str.strip()
-                            alarm_details = (ts_strs + ' - ' + etypes).tolist()
+                            type_descs = filtered[type_a].astype(str).str.strip()
+                            alarm_details = (etypes + ' ' + ts_strs + ' - ' + type_descs).tolist()
                         else:
-                            alarm_details = ts_strs.tolist()
+                            alarm_details = (etypes + ' ' + ts_strs).tolist()
                         
                         s['Event Details'] = '; '.join(alarm_details)
                     else:
@@ -1366,7 +1392,9 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         else:
             # No alarm file - set empty event details for all summaries
             for s in summaries:
-                s['Events in Window (Alarm/Warning)'] = 0
+                s['Alarms in Window'] = 0
+                s['Warnings in Window'] = 0
+                s['Total Events'] = 0
                 s['Event Details'] = ''
         
         elapsed = round(time.time() - t0, 2)
@@ -1387,7 +1415,9 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             'Date of Test End',
             'Time of Test End',
             'Cumulative Time of Testing (h)',
-            'Events in Window (Alarm/Warning)',
+            'Alarms in Window',
+            'Warnings in Window',
+            'Total Events',
             'Event Details',
             'First Nominal Power',
             'Last Nominal Power',
