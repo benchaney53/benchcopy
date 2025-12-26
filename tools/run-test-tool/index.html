@@ -423,6 +423,13 @@
                 <input type="number" id="energy-threshold" class="toggle-input" value="54" min="0" step="1">
                 <span class="toggle-unit">MWh</span>
             </div>
+            <div class="toggle-group">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="require-zero-alarms" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+                <span class="toggle-label">Require 0 Alarms</span>
+            </div>
         </div>
         <div class="form-row">
             <div class="form-group">
@@ -1034,6 +1041,7 @@
                 const requireAvailability = document.getElementById('require-availability').checked;
                 const requireNominal = document.getElementById('require-nominal').checked;
                 const requireEnergy = document.getElementById('require-energy').checked;
+                const requireZeroAlarms = document.getElementById('require-zero-alarms').checked;
                 const params = {
                     rated_power_kw: parseFloat(document.getElementById('rated-power').value),
                     test_hours: parseInt(document.getElementById('test-hours').value),
@@ -1044,6 +1052,7 @@
                     nominal_threshold_pct: nominalThreshold,
                     require_energy: requireEnergy,
                     energy_threshold_mwh: requireEnergy ? parseFloat(document.getElementById('energy-threshold').value) : null,
+                    require_zero_alarms: requireZeroAlarms,
                     bin_minutes: document.getElementById('bin-minutes').value || null,
                     energy_source: document.getElementById('energy-source').value,
                     allowed_categories: document.getElementById('allowed-categories').value,

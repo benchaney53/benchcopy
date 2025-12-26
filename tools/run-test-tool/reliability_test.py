@@ -1102,6 +1102,7 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         require_nominal = params.get('require_nominal', True)
         require_energy = params.get('require_energy', True)
         energy_threshold_mwh = params.get('energy_threshold_mwh', 54.0)
+        require_zero_alarms = params.get('require_zero_alarms', True)
         
         # Set min_availability based on toggle
         if require_availability:
@@ -1352,6 +1353,7 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         priority_columns = [
             'WTG',
             'Energy Pass/Fail',
+            'Alarms Pass/Fail',
             'Availability (%)',
             'Date of Test Start',
             'Time of Test Start',
@@ -1376,6 +1378,13 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 s['Energy Pass/Fail'] = 'PASS' if total_energy_mwh >= energy_threshold_mwh else 'FAIL'
             else:
                 s['Energy Pass/Fail'] = 'N/A (threshold disabled)'
+            
+            # Add Alarms Pass/Fail column based on require_zero_alarms
+            if require_zero_alarms:
+                alarm_count = s.get('Events in Window (Alarm/Warning)', 0) or 0
+                s['Alarms Pass/Fail'] = 'PASS' if alarm_count == 0 else 'FAIL'
+            else:
+                s['Alarms Pass/Fail'] = 'N/A (not required)'
             
             # Build reordered summary
             reordered = {}
