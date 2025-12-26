@@ -1174,31 +1174,30 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             wtg_df = df.loc[:, keep_cols].copy().reset_index(drop=True)
             log(f"  {wtg}: DataFrame shape = {wtg_df.shape}, columns = {wtg_specific_cols[:5]}{'...' if len(wtg_specific_cols) > 5 else ''}")
             
-            try:
-                result = process_wtg_fast(
-                    d=wtg_df,
-                    ts_col=ts_col,
-                    wtg=wtg,
-                    rated_power_kw=float(params.get('rated_power_kw', 4500)),
-                    bin_minutes=bin_minutes,
-                    test_hours=int(params.get('test_hours', 72)),
-                    extension_hours=int(params.get('extension_hours', 24)),
-                    min_availability_pct=min_availability_pct,
-                    nominal_threshold_pct=float(params.get('nominal_threshold_pct', 99)),
-                    allowed_categories=allowed_categories,
-                    disallowed_categories=disallowed_categories,
-                    active_base_categories=active_base_categories,
-                    energy_source=energy_source,
-                    require_nominal=require_nominal,
-                    require_energy=require_energy,
-                    energy_threshold_mwh=energy_threshold_mwh,
-                    allowed_window_categories=allowed_window_categories,
-                    disqualifying_window_categories=disqualifying_window_categories,
-                    power_curve_arrays=power_curve_arrays,
-                    pr_threshold=pr_threshold,
-                    wind_col_hint=wind_col_hint,
-                    air_density_col_hint=air_density_col_hint
-                )
+            result = process_wtg_fast(
+                d=wtg_df,
+                ts_col=ts_col,
+                wtg=wtg,
+                rated_power_kw=float(params.get('rated_power_kw', 4500)),
+                bin_minutes=bin_minutes,
+                test_hours=int(params.get('test_hours', 72)),
+                extension_hours=int(params.get('extension_hours', 24)),
+                min_availability_pct=min_availability_pct,
+                nominal_threshold_pct=float(params.get('nominal_threshold_pct', 99)),
+                allowed_categories=allowed_categories,
+                disallowed_categories=disallowed_categories,
+                active_base_categories=active_base_categories,
+                energy_source=energy_source,
+                require_nominal=require_nominal,
+                require_energy=require_energy,
+                energy_threshold_mwh=energy_threshold_mwh,
+                allowed_window_categories=allowed_window_categories,
+                disqualifying_window_categories=disqualifying_window_categories,
+                power_curve_arrays=power_curve_arrays,
+                pr_threshold=pr_threshold,
+                wind_col_hint=wind_col_hint,
+                air_density_col_hint=air_density_col_hint
+            )
             
             # Handle results with multiple candidates (for alarm-based selection)
             if 'candidates' in result:
