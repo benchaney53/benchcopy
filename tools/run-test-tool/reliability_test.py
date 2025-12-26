@@ -675,7 +675,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         active_acc = 0
         
         # Collect candidates - use list and sort at end (simpler, more reliable)
-        MAX_CANDIDATES = 50  # Increased for better coverage
+        MAX_CANDIDATES = 200  # Increased to find all potential 0-alarm windows
         all_candidates = []
         candidates_found = 0
         
@@ -793,7 +793,8 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                     f"avail={best['availability_pct']:.1f}%, 3x={best['contains_3x']}, 1x={best['contains_1x']}, "
                     f"score={score(best)}")
         
-        return best
+        # Return ALL valid candidates (sorted), not just the best
+        return all_candidates
     
     # Targets and floors
     target72 = int(round(test_hours * 60 / bin_minutes))
@@ -813,17 +814,19 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     # Search ALL target sizes and collect best candidates from each
     # Don't break early - we want to find the globally best window
     step_bins = int(round(2 * 60 / bin_minutes))  # 2-hour increments
-    MAX_VALID_CANDIDATES = 30  # Increased for better coverage
+    MAX_VALID_CANDIDATES = 100  # Increased to find all 0-alarm windows
     all_valid_candidates = []
     
     for target_bins in range(target72, max_target + 1, step_bins):
-        cand = best_by_priority_active(target_bins, req_mwh_1x, req_mwh_3x, log_func=log_wtg)
-        if cand and cand['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED:
-            # Add timestamp info for alarm filtering
-            cand['test_start'] = d.iloc[cand['start']][ts_col]
-            cand['test_end'] = d.iloc[cand['end']][ts_col]
-            cand['target_bins'] = target_bins
-            all_valid_candidates.append(cand)
+        cands = best_by_priority_active(target_bins, req_mwh_1x, req_mwh_3x, log_func=log_wtg)
+        if cands:
+            for cand in cands:
+                if cand['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED:
+                    # Add timestamp info for alarm filtering
+                    cand['test_start'] = d.iloc[cand['start']][ts_col]
+                    cand['test_end'] = d.iloc[cand['end']][ts_col]
+                    cand['target_bins'] = target_bins
+                    all_valid_candidates.append(cand)
     
     # Sort all candidates by score and keep top MAX_VALID_CANDIDATES
     def final_score(c):
