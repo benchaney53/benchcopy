@@ -629,6 +629,9 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     def span_sum(ps, s, e):
         return ps[e] - (ps[s-1] if s > 0 else 0)
     
+    # Track the best "near-miss" candidate across all target sizes for failure diagnostics
+    best_near_miss = None
+    
     def best_by_priority_active(target_active_bins: int, req_mwh_1x: float, req_mwh_3x: float, log_func=None):
         """
         Find the BEST window with exactly target_active_bins active samples.
@@ -637,6 +640,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         2. Shortest wall-clock duration (fewer total bins)
         3. Earliest start time (as tiebreaker)
         """
+        nonlocal best_near_miss
         N = len(d)
         s = 0
         e = -1
@@ -646,6 +650,9 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         MAX_CANDIDATES = 50  # Increased for better coverage
         all_candidates = []
         candidates_found = 0
+        
+        # Track rejected candidates for "near-miss" diagnostics
+        near_miss_candidates = []
         
         # Use smaller step size to find more candidates
         step = max(1, int(2 * 60 / bin_minutes))  # 2-hour steps
@@ -658,47 +665,64 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
             
             if active_acc >= target_active_bins:
                 has_bad = span_sum(ps_bad, s, e) > 0
-                if not has_bad:
-                    active_bins = span_sum(ps_active, s, e)
-                    unavail_count = span_sum(ps_unavail_active, s, e)
-                    availability_pct = 100.0 * ((active_bins - unavail_count) / max(1, active_bins))
+                active_bins = span_sum(ps_active, s, e)
+                unavail_count = span_sum(ps_unavail_active, s, e)
+                availability_pct = 100.0 * ((active_bins - unavail_count) / max(1, active_bins))
+                nominal_hours = span_sum(ps_nominal_active, s, e) * (bin_minutes / 60.0)
+                energy_kwh = span_sum(ps_energy_active, s, e)
+                has_3x = energy_kwh >= req_mwh_3x
+                has_1x = energy_kwh >= req_mwh_1x
+                wall_clock_bins = e - s + 1
+                
+                # Track why this window was rejected (for near-miss diagnostics)
+                rejection_reasons = []
+                if has_bad:
+                    rejection_reasons.append('contains_disqualifying_categories')
+                if availability_pct + 1e-9 < min_availability_pct:
+                    rejection_reasons.append(f'low_availability_{availability_pct:.1f}%')
+                if nominal_hours < 24.0:
+                    rejection_reasons.append(f'low_nominal_{nominal_hours:.1f}h')
+                
+                # Build candidate dict for both valid and near-miss tracking
+                cand = {
+                    'start': int(s), 'end': int(e),
+                    'active_bins': int(active_bins),
+                    'wall_clock_bins': int(wall_clock_bins),
+                    'availability_pct': float(availability_pct),
+                    'nominal_hours': float(nominal_hours),
+                    'energy_kwh': float(energy_kwh),
+                    'interruptions': 1 if unavail_count > 0 else 0,
+                    'contains_3x': bool(has_3x),
+                    'contains_1x': bool(has_1x),
+                }
+                
+                if not has_bad and availability_pct + 1e-9 >= min_availability_pct:
+                    # Valid window (may still fail nominal check later)
+                    candidates_found += 1
                     
-                    if availability_pct + 1e-9 >= min_availability_pct:
-                        nominal_hours = span_sum(ps_nominal_active, s, e) * (bin_minutes / 60.0)
-                        energy_kwh = span_sum(ps_energy_active, s, e)
-                        
-                        # Check cumulative energy against floors (NOT requiring consecutive 24h subwindow)
-                        # 24h cumulative nominal is checked separately via nominal_hours
-                        has_3x = energy_kwh >= req_mwh_3x
-                        has_1x = energy_kwh >= req_mwh_1x
-                        
-                        interrupts = 1 if unavail_count > 0 else 0
-                        wall_clock_bins = e - s + 1  # Total calendar duration
-                        cand = {
-                            'start': int(s), 'end': int(e),
-                            'active_bins': int(active_bins),
-                            'wall_clock_bins': int(wall_clock_bins),
-                            'availability_pct': float(availability_pct),
-                            'nominal_hours': float(nominal_hours),
-                            'energy_kwh': float(energy_kwh),
-                            'interruptions': float(interrupts),
-                            'contains_3x': bool(has_3x),
-                            'contains_1x': bool(has_1x),
-                        }
-                        candidates_found += 1
-                        
-                        # Score tuple: (meets_nominal, pr_tier, wall_clock, start) - LOWER is BETTER
-                        meets_nom = 0 if nominal_hours >= 24.0 else 1
-                        pr_tier = 0 if has_3x else (1 if has_1x else 2)
-                        score = (meets_nom, pr_tier, wall_clock_bins, s)
-                        cand['_score'] = score
-                        
-                        all_candidates.append(cand)
-                        
-                        # Cap list size periodically
-                        if len(all_candidates) > MAX_CANDIDATES * 2:
-                            all_candidates.sort(key=lambda c: c['_score'])
-                            all_candidates = all_candidates[:MAX_CANDIDATES]
+                    # Score tuple: (meets_nominal, pr_tier, wall_clock, start) - LOWER is BETTER
+                    meets_nom = 0 if nominal_hours >= 24.0 else 1
+                    pr_tier = 0 if has_3x else (1 if has_1x else 2)
+                    score = (meets_nom, pr_tier, wall_clock_bins, s)
+                    cand['_score'] = score
+                    
+                    all_candidates.append(cand)
+                    
+                    # Cap list size periodically
+                    if len(all_candidates) > MAX_CANDIDATES * 2:
+                        all_candidates.sort(key=lambda c: c['_score'])
+                        all_candidates = all_candidates[:MAX_CANDIDATES]
+                
+                # Track near-miss regardless (for failure diagnostics)
+                if rejection_reasons or nominal_hours < 24.0:
+                    cand['rejection_reasons'] = rejection_reasons if rejection_reasons else [f'low_nominal_{nominal_hours:.1f}h']
+                    # Score near-misses: prefer highest nominal hours, then highest availability
+                    near_miss_score = (-nominal_hours, -availability_pct, wall_clock_bins)
+                    cand['_near_miss_score'] = near_miss_score
+                    near_miss_candidates.append(cand)
+                    if len(near_miss_candidates) > 20:
+                        near_miss_candidates.sort(key=lambda c: c['_near_miss_score'])
+                        near_miss_candidates = near_miss_candidates[:10]
             
             # Skip ahead by step, but update active_acc properly
             skip = min(step, N - s)
@@ -710,6 +734,13 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                     e = s - 1
                 if s >= N:
                     break
+        
+        # Update global best near-miss if this target had better ones
+        if near_miss_candidates:
+            near_miss_candidates.sort(key=lambda c: c['_near_miss_score'])
+            best_nm = near_miss_candidates[0]
+            if best_near_miss is None or best_nm['_near_miss_score'] < best_near_miss['_near_miss_score']:
+                best_near_miss = best_nm
         
         if not all_candidates:
             if log_func:
@@ -804,6 +835,12 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
             log_wtg(f"Fallback candidate: nominal={cand['nominal_hours']:.1f}h, avail={cand['availability_pct']:.1f}%")
         else:
             log_wtg(f"No fallback candidate found either")
+            # Log near-miss info for debugging
+            if best_near_miss:
+                nm = best_near_miss
+                log_wtg(f"NEAREST MISS: nominal={nm['nominal_hours']:.1f}h/24h, avail={nm['availability_pct']:.1f}%, "
+                       f"active={nm['active_bins'] * bin_minutes / 60:.1f}h, energy={nm['energy_kwh']:.1f}kWh, "
+                       f"reasons={nm.get('rejection_reasons', ['unknown'])}")
 
     # Return candidates for alarm-based selection in main function
     # Diagnostic info for failures
@@ -822,14 +859,17 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         required_active_bins = target72
         required_active_hours = required_active_bins * bin_minutes / 60.0
         
+        # Use near-miss if no best_cand provided
+        near_miss = best_near_miss if best_cand is None else best_cand
+        
         # Determine specific failure reason
         if failure_reason is None:
             if total_active < required_active_bins:
                 failure_reason = f"Not enough active bins: have {total_active} ({active_hours:.1f}h), need {required_active_bins} ({required_active_hours:.1f}h)"
-            elif best_cand and best_cand.get('nominal_hours', 0) < MIN_NOMINAL_HOURS_REQUIRED:
-                failure_reason = f"Insufficient nominal power hours: best candidate has {best_cand.get('nominal_hours', 0):.1f}h, need {MIN_NOMINAL_HOURS_REQUIRED}h"
-            elif best_cand and best_cand.get('availability_pct', 0) < min_availability_pct:
-                failure_reason = f"Availability too low: best candidate has {best_cand.get('availability_pct', 0):.1f}%, need {min_availability_pct}%"
+            elif near_miss and near_miss.get('nominal_hours', 0) < MIN_NOMINAL_HOURS_REQUIRED:
+                failure_reason = f"Insufficient nominal power hours: best candidate has {near_miss.get('nominal_hours', 0):.1f}h, need {MIN_NOMINAL_HOURS_REQUIRED}h"
+            elif near_miss and near_miss.get('availability_pct', 0) < min_availability_pct:
+                failure_reason = f"Availability too low: best candidate has {near_miss.get('availability_pct', 0):.1f}%, need {min_availability_pct}%"
             else:
                 failure_reason = "No contiguous window of sufficient quality found"
         
@@ -850,11 +890,14 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
             'Allowed Window Categories': ', '.join(allowed_window_categories),
             'Disqualifying Categories': ', '.join(disqualifying_window_categories),
         }
-        if best_cand:
-            diag['Best Candidate Availability (%)'] = round(best_cand.get('availability_pct', 0), 2)
-            diag['Best Candidate Nominal Hours'] = round(best_cand.get('nominal_hours', 0), 2)
-            diag['Best Candidate Active Hours'] = round(best_cand.get('active_bins', 0) * bin_minutes / 60.0, 2)
-            diag['Best Candidate Wall-Clock Hours'] = round(best_cand.get('wall_clock_bins', 0) * bin_minutes / 60.0, 2)
+        # Add near-miss details
+        if near_miss:
+            diag['Nearest Candidate Nominal Hours'] = round(near_miss.get('nominal_hours', 0), 2)
+            diag['Nearest Candidate Availability (%)'] = round(near_miss.get('availability_pct', 0), 2)
+            diag['Nearest Candidate Active Hours'] = round(near_miss.get('active_bins', 0) * bin_minutes / 60.0, 2)
+            diag['Nearest Candidate Wall-Clock Hours'] = round(near_miss.get('wall_clock_bins', 0) * bin_minutes / 60.0, 2)
+            diag['Nearest Candidate Energy (kWh)'] = round(near_miss.get('energy_kwh', 0), 1)
+            diag['Nearest Candidate Rejection Reasons'] = ', '.join(near_miss.get('rejection_reasons', ['unknown']))
         return diag
     
     def finalize_result(chosen):
