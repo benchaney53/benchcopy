@@ -807,31 +807,54 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
 
     # Return candidates for alarm-based selection in main function
     # Diagnostic info for failures
-    def build_diagnostic_info(best_cand=None):
+    def build_diagnostic_info(best_cand=None, failure_reason=None):
         cats_unique = [c for c in sorted(cats_norm_full.unique().tolist()) if c and c.lower() != 'nan']
         total_rows = len(d)
         total_active = int(active_full.sum())
+        total_paused = int(paused_full.sum())
+        total_unavail = int(unavail_full.sum())
         total_hours = total_rows * bin_minutes / 60.0
         active_hours = total_active * bin_minutes / 60.0
+        paused_hours = total_paused * bin_minutes / 60.0
+        unavail_hours = total_unavail * bin_minutes / 60.0
+        
+        # Calculate why we failed
+        required_active_bins = target72
+        required_active_hours = required_active_bins * bin_minutes / 60.0
+        
+        # Determine specific failure reason
+        if failure_reason is None:
+            if total_active < required_active_bins:
+                failure_reason = f"Not enough active bins: have {total_active} ({active_hours:.1f}h), need {required_active_bins} ({required_active_hours:.1f}h)"
+            elif best_cand and best_cand.get('nominal_hours', 0) < MIN_NOMINAL_HOURS_REQUIRED:
+                failure_reason = f"Insufficient nominal power hours: best candidate has {best_cand.get('nominal_hours', 0):.1f}h, need {MIN_NOMINAL_HOURS_REQUIRED}h"
+            elif best_cand and best_cand.get('availability_pct', 0) < min_availability_pct:
+                failure_reason = f"Availability too low: best candidate has {best_cand.get('availability_pct', 0):.1f}%, need {min_availability_pct}%"
+            else:
+                failure_reason = "No contiguous window of sufficient quality found"
+        
         diag = {
             'WTG': wtg,
             'Mode': mode,
             'Status': 'FAILED',
+            'Failure Reason': failure_reason,
             'Total Rows': total_rows,
             'Total Hours of Data': round(total_hours, 1),
             'Active Bins': total_active,
             'Active Hours': round(active_hours, 1),
-            'Required Active Hours (Test)': test_hours,
-            'Required Active Hours (Extended)': test_hours + extension_hours if extension_hours else test_hours,
+            'Paused Hours': round(paused_hours, 1),
+            'Unavailable Hours': round(unavail_hours, 1),
+            'Required Active Hours': required_active_hours,
             'Categories Found': ', '.join(cats_unique[:10]) + ('...' if len(cats_unique) > 10 else ''),
+            'Category Breakdown': ', '.join([f"{cat}: {count}" for cat, count in cats_norm_full.value_counts().head(5).items()]),
             'Allowed Window Categories': ', '.join(allowed_window_categories),
             'Disqualifying Categories': ', '.join(disqualifying_window_categories),
-            'Min Availability Required': min_availability_pct,
         }
         if best_cand:
-            diag['Best Candidate Availability'] = round(best_cand.get('availability_pct', 0), 2)
+            diag['Best Candidate Availability (%)'] = round(best_cand.get('availability_pct', 0), 2)
             diag['Best Candidate Nominal Hours'] = round(best_cand.get('nominal_hours', 0), 2)
-            diag['Best Candidate Active Bins'] = best_cand.get('active_bins', 0)
+            diag['Best Candidate Active Hours'] = round(best_cand.get('active_bins', 0) * bin_minutes / 60.0, 2)
+            diag['Best Candidate Wall-Clock Hours'] = round(best_cand.get('wall_clock_bins', 0) * bin_minutes / 60.0, 2)
         return diag
     
     def finalize_result(chosen):
@@ -887,10 +910,19 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     
     # No valid candidates - use fallback or fail
     if fallback is None:
-        diag = build_diagnostic_info()
-        diag['Reason'] = 'No feasible window found. Check if categories match and data has enough rows.'
+        # Determine why we failed
+        total_active = int(active_full.sum())
+        required_active_bins = target72
+        
+        if total_active < required_active_bins:
+            reason = f"Insufficient active time: only {total_active * bin_minutes / 60.0:.1f}h active, need {required_active_bins * bin_minutes / 60.0:.1f}h"
+        else:
+            reason = "No contiguous window meeting all requirements found (check nominal power threshold and availability)"
+        
+        diag = build_diagnostic_info(failure_reason=reason)
         full_df = d.copy()
         full_df['_InWindow'] = False
+        log_wtg(f"FAILED: {reason}")
         return {'wtg': wtg, 'summary': diag, 'data_slice': full_df, 'window_start': None, 'window_end': None}
     
     # Fallback doesn't meet 24h nominal but use it anyway
@@ -1117,14 +1149,54 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                     log(f"    Pre-selection #{ci+1}: active={c_active:.1f}h, wall={c_wall:.1f}h, "
                         f"nominal={cand['nominal_hours']:.1f}h, 3x={cand['contains_3x']}, 1x={cand['contains_1x']}")
                 
-                # Select the best candidate (already sorted by nominal hours/PR tier)
-                # Window extension is ONLY for meeting nominal power requirements, not to avoid alarms
-                # Alarms are counted for informational purposes only, using only the first 72h of active bins
+                # If we have alarm data, count alarms for each candidate and prefer windows with 0 alarms
+                if alarm_df is not None and alarm_cols[0] is not None:
+                    ts_a, unit_a, type_a, sev_a = alarm_cols
+                    
+                    # Count alarms for each candidate
+                    for cand in candidates:
+                        start = pd.to_datetime(cand['test_start'])
+                        end = pd.to_datetime(cand['test_end'])
+                        filtered = filter_alarm_log_for_window(
+                            alarm_df, unit_value=wtg, win_start=start, win_end=end,
+                            ts_col=ts_a, unit_col=unit_a, type_col=type_a,
+                            keep_event_types=keep_event_types, sev_col=sev_a,
+                            min_severity=min_severity
+                        )
+                        cand['alarm_count'] = len(filtered)
+                    
+                    # Log alarm counts
+                    for ci, cand in enumerate(candidates[:5]):
+                        log(f"    Candidate #{ci+1}: {cand['alarm_count']} alarms/warnings")
+                    
+                    # Re-sort candidates: prioritize 0 alarms, then by original criteria
+                    # Original criteria: (meets_nominal, pr_tier, wall_clock_bins, start)
+                    def alarm_aware_score(c):
+                        meets_nominal = 0 if c['nominal_hours'] >= 24.0 else 1
+                        pr_tier = 0 if c['contains_3x'] else (1 if c['contains_1x'] else 2)
+                        # Prefer 0 alarms, then by alarm count
+                        alarm_priority = 0 if c['alarm_count'] == 0 else 1
+                        return (meets_nominal, pr_tier, alarm_priority, c['alarm_count'], c['wall_clock_bins'], c['start'])
+                    
+                    candidates.sort(key=alarm_aware_score)
+                    
+                    # Check if we found a 0-alarm window
+                    if candidates[0]['alarm_count'] == 0:
+                        log(f"  {wtg}: Found window with 0 alarms!")
+                    else:
+                        log(f"  {wtg}: No 0-alarm window available, best has {candidates[0]['alarm_count']} alarms")
+                else:
+                    # No alarm data - set alarm_count to 0 for all candidates
+                    for cand in candidates:
+                        cand['alarm_count'] = 0
+                
+                # Select the best candidate (now considering alarms)
                 best_cand = candidates[0]
                 c_active = best_cand['active_bins'] * bin_minutes / 60.0
                 c_wall = best_cand['wall_clock_bins'] * bin_minutes / 60.0
                 log(f"  FINAL: {wtg} selected window: active={c_active:.1f}h, wall={c_wall:.1f}h, "
-                    f"nominal={best_cand['nominal_hours']:.1f}h, 3x={best_cand['contains_3x']}, 1x={best_cand['contains_1x']}")
+                    f"nominal={best_cand['nominal_hours']:.1f}h, 3x={best_cand['contains_3x']}, 1x={best_cand['contains_1x']}, "
+                    f"alarms={best_cand.get('alarm_count', '?')}")
                 
                 result = finalize_func(best_cand)
             
