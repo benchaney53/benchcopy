@@ -543,13 +543,11 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     def log_proc(msg):
         print(f"[Python] [{wtg}] {msg}")
     
-    log_proc(f"process_wtg_fast called: {len(d)} rows, {len(d.columns)} columns")
-    
-    # Resolve columns
+    # Resolve columns (minimal logging - only log errors)
     seps = ['_', ' ', '-']
     power_col = find_col_with_suffix(d.columns.tolist(), wtg, POWER_SUFFIX_CANDIDATES, seps)
     if power_col is None:
-        log_proc(f"  FAILED: No power column found. Looking for suffix in {POWER_SUFFIX_CANDIDATES}")
+        log_proc(f"FAILED: No power column found")
         return {'wtg': wtg, 'summary': {'WTG': wtg, 'Status': 'FAILED',
                                         'Reason': f'No power column found for {wtg}'}, 'data_slice': d.head(0)}
     
@@ -558,14 +556,14 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     state_col = find_col_with_suffix(d.columns.tolist(), wtg, [STATE_SUFFIX], seps) or f"{wtg}_{STATE_SUFFIX}"
     cat_col = find_col_with_suffix(d.columns.tolist(), wtg, [CAT_SUFFIX], seps) or f"{wtg}_{CAT_SUFFIX}"
     
-    log_proc(f"  Resolved columns: power={power_col}, state={state_col}, cat={cat_col}")
-    
     if cat_col not in d.columns:
+        log_proc(f"FAILED: No category column found")
         return {'wtg': wtg, 'summary': {'WTG': wtg, 'Status': 'FAILED',
                                         'Reason': f'No category column found for {wtg}'}, 'data_slice': d.head(0)}
 
     wind_col = wind_col_hint if (wind_col_hint and wind_col_hint in d.columns) else find_col_with_suffix(d.columns.tolist(), wtg, WIND_SPEED_SUFFIX_CANDIDATES, seps)
     if wind_col is None:
+        log_proc(f"FAILED: No wind speed column found")
         return {'wtg': wtg, 'summary': {'WTG': wtg, 'Status': 'FAILED',
                                         'Reason': f'No wind speed column found for {wtg}'}, 'data_slice': d.head(0)}
 
@@ -578,16 +576,12 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         air_density_source = 'missing_all'
         air_series = pd.Series([np.nan] * len(d), index=d.index)
         air_density_missing_count = len(d)
-        log_proc(f"  Air density column not found - will use 90% rated power threshold for all slots")
     else:
         air_series = pd.to_numeric(d[air_col], errors='coerce')
         # Track missing values within the column
         air_density_missing_count = int(air_series.isna().sum())
         if air_density_missing_count > 0:
             air_density_source = f'column_with_{air_density_missing_count}_missing'
-            log_proc(f"  Air density column found but has {air_density_missing_count} missing values")
-    
-    log_proc(f"  Wind/Air columns: wind={wind_col}, air={air_col or 'MISSING'}")
 
     wind_series = pd.to_numeric(d[wind_col], errors='coerce')
     expected_power_raw = compute_expected_power(wind_series, air_series, power_curve_arrays)
@@ -624,16 +618,9 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     # Combine: use missing_air logic where air density is missing, otherwise use normal logic
     nominal_full = np.where(air_density_missing_mask, missing_air_nominal, normal_nominal)
     
-    # DATA FINGERPRINT - unique identifier for this WTG's data to verify isolation
-    power_sum = float(np.nansum(pwr))
-    power_mean = float(np.nanmean(pwr))
-    wind_mean = float(np.nanmean(wind_series))
-    cat_counts = cats_norm_full.value_counts().head(3).to_dict()
-    log_proc(f"  DATA FINGERPRINT: power_sum={power_sum:.1f}, power_mean={power_mean:.1f}, wind_mean={wind_mean:.2f}")
-    log_proc(f"  Top categories: {cat_counts}")
-    log_proc(f"  Active bins: {int(active_full.sum())}, Paused: {int(paused_full.sum())}, Unavail: {int(unavail_full.sum())}")
-    if air_density_missing_count > 0:
-        log_proc(f"  Air density missing for {air_density_missing_count} slots - using 90% rated power ({threshold_kw_missing_air:.0f} kW) threshold")
+    # Calculate data summary for final log (but don't log here - reduce noise)
+    total_active_bins = int(active_full.sum())
+    total_active_hours = total_active_bins * bin_minutes / 60.0
     
     d['_WindSpeed'] = wind_series
     d['_AirDensityUsed'] = air_series
@@ -785,13 +772,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         all_candidates.sort(key=score)
         best = all_candidates[0]
         
-        if log_func:
-            active_hrs = best['active_bins'] * bin_minutes / 60.0
-            wall_hrs = best['wall_clock_bins'] * bin_minutes / 60.0
-            log_func(f"    target={target_active_bins} bins: Found {candidates_found} candidates, best: "
-                    f"active={active_hrs:.1f}h, wall={wall_hrs:.1f}h, nominal={best['nominal_hours']:.1f}h, "
-                    f"avail={best['availability_pct']:.1f}%, 3x={best['contains_3x']}, 1x={best['contains_1x']}, "
-                    f"score={score(best)}")
+        # Don't log individual target searches - too verbose
         
         # Return ALL valid candidates (sorted), not just the best
         return all_candidates
@@ -799,7 +780,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     # Targets and floors
     target72 = int(round(test_hours * 60 / bin_minutes))
     max_target = int(round((test_hours + extension_hours) * 60 / bin_minutes)) if extension_hours > 0 else target72
-    req_mwh_1x = 0.5 * (rated_power_kw / 1000.0) * 24.0
+    req_mwh_1x = 0.5 * (rated_power_kw / 1000.0) * 24.0  # Energy floor in MWh
     req_mwh_3x = 3.0 * req_mwh_1x
     
     MIN_NOMINAL_HOURS_REQUIRED = 24.0
@@ -807,18 +788,14 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     def log_wtg(msg):
         print(f"[Python] [{wtg}] {msg}")
     
-    log_wtg(f"Starting window search: target={target72} bins ({test_hours}h), max={max_target} bins ({test_hours + extension_hours}h)")
-    log_wtg(f"Energy floors: 1x={req_mwh_1x:.1f} kWh, 3x={req_mwh_3x:.1f} kWh")
-    log_wtg(f"Total data: {len(d)} rows, {int(active_full.sum())} active bins ({active_full.sum() * bin_minutes / 60:.1f}h)")
-    
     # Search ALL target sizes and collect best candidates from each
     # Don't break early - we want to find the globally best window
     step_bins = int(round(2 * 60 / bin_minutes))  # 2-hour increments
-    MAX_VALID_CANDIDATES = 100  # Increased to find all 0-alarm windows
+    MAX_VALID_CANDIDATES = 100  # Keep enough candidates for alarm filtering
     all_valid_candidates = []
     
     for target_bins in range(target72, max_target + 1, step_bins):
-        cands = best_by_priority_active(target_bins, req_mwh_1x, req_mwh_3x, log_func=log_wtg)
+        cands = best_by_priority_active(target_bins, req_mwh_1x, req_mwh_3x, log_func=None)  # No per-target logging
         if cands:
             for cand in cands:
                 if cand['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED:
@@ -837,41 +814,21 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     all_valid_candidates.sort(key=final_score)
     valid_candidates = all_valid_candidates[:MAX_VALID_CANDIDATES]
     
-    log_wtg(f"Window search complete: {len(all_valid_candidates)} total valid, keeping top {len(valid_candidates)}")
-    if valid_candidates:
-        best = valid_candidates[0]
-        active_hrs = best['active_bins'] * bin_minutes / 60.0
-        wall_hrs = best['wall_clock_bins'] * bin_minutes / 60.0
-        log_wtg(f"BEST CANDIDATE: target={best.get('target_bins', '?')} bins, "
-               f"active={active_hrs:.1f}h, wall={wall_hrs:.1f}h, nominal={best['nominal_hours']:.1f}h, "
-               f"start={best['test_start']}, end={best['test_end']}")
-        # Log runner-up candidates for comparison
-        if len(valid_candidates) > 1:
-            log_wtg(f"Runner-up candidates:")
-            for i, cand in enumerate(valid_candidates[1:5], 2):
-                c_active = cand['active_bins'] * bin_minutes / 60.0
-                c_wall = cand['wall_clock_bins'] * bin_minutes / 60.0
-                log_wtg(f"  #{i}: active={c_active:.1f}h, wall={c_wall:.1f}h, nominal={cand['nominal_hours']:.1f}h, "
-                       f"3x={cand['contains_3x']}, 1x={cand['contains_1x']}")
-    
     # If no window meets requirement, try the max extension as fallback
     fallback = None
     if not valid_candidates:
-        log_wtg(f"No valid candidates found, trying max extension fallback...")
-        cand = best_by_priority_active(max_target, req_mwh_1x, req_mwh_3x, log_func=log_wtg)
-        if cand:
+        cand_list = best_by_priority_active(max_target, req_mwh_1x, req_mwh_3x, log_func=None)
+        if cand_list:
+            cand = cand_list[0]  # best_by_priority_active now returns a list
             cand['test_start'] = d.iloc[cand['start']][ts_col]
             cand['test_end'] = d.iloc[cand['end']][ts_col]
             fallback = cand
-            log_wtg(f"Fallback candidate: nominal={cand['nominal_hours']:.1f}h, avail={cand['availability_pct']:.1f}%")
+            log_wtg(f"FALLBACK: Using window with only {cand['nominal_hours']:.1f}h nominal (< 24h required)")
         else:
-            log_wtg(f"No fallback candidate found either")
             # Log near-miss info for debugging
             if best_near_miss:
                 nm = best_near_miss
-                log_wtg(f"NEAREST MISS: nominal={nm['nominal_hours']:.1f}h/24h, avail={nm['availability_pct']:.1f}%, "
-                       f"active={nm['active_bins'] * bin_minutes / 60:.1f}h, energy={nm['energy_kwh']:.1f}kWh, "
-                       f"reasons={nm.get('rejection_reasons', ['unknown'])}")
+                log_wtg(f"FAILED: No valid window. Best candidate had nominal={nm['nominal_hours']:.1f}h/24h, avail={nm['availability_pct']:.1f}%")
 
     # Return candidates for alarm-based selection in main function
     # Diagnostic info for failures
@@ -1030,13 +987,12 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         data_sheets = {}
         alarm_sheets = {}
         
-        log(f"Starting analysis of {file_name} ({len(file_bytes)} bytes)")
+        log(f"Starting analysis: {file_name} ({len(file_bytes):,} bytes)")
         
         # Read SCADA file
         file_ext = file_name.lower().split('.')[-1]
         file_buffer = io.BytesIO(bytes(file_bytes))
         
-        log(f"Reading {file_ext} file...")
         if file_ext in ['xlsx', 'xlsm', 'xltx', 'xltm']:
             raw_df = pd.read_excel(file_buffer, engine='openpyxl')
         elif file_ext == 'xls':
@@ -1048,38 +1004,25 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         else:
             return json.dumps({'success': False, 'error': f'Unsupported file type: {file_ext}'})
         
-        log(f"File read: {len(raw_df)} rows, {len(raw_df.columns)} columns")
-        
-        # Normalize headers
-        log("Normalizing headers...")
+        # Normalize headers and detect structure
         df = normalize_headers(raw_df)
-        log(f"Headers normalized: {len(df.columns)} columns")
-        
-        # Detect timestamp
-        log("Detecting timestamp column...")
         ts_col = detect_timestamp_column(df)
-        log(f"Timestamp column: {ts_col}")
         df[ts_col] = pd.to_datetime(df[ts_col], errors='coerce')
         df = df.dropna(subset=[ts_col]).sort_values(ts_col).reset_index(drop=True)
-        log(f"Data after timestamp cleanup: {len(df)} rows")
         
         # Parse separators and detect WTGs
-        log("Detecting WTGs...")
         seps = _parse_separators(params.get('wtg_separators', '_, -, space'))
         wtgs = extract_wtgs_flexible(df.columns.tolist(), seps)
-        log(f"Found {len(wtgs)} WTGs: {wtgs[:5]}{'...' if len(wtgs) > 5 else ''}")
+        log(f"Loaded {len(df):,} rows, {len(wtgs)} WTGs: {', '.join(wtgs[:8])}{'...' if len(wtgs) > 8 else ''}")
         
         if not wtgs:
             return json.dumps({'success': False, 'error': 'No WTGs detected. Check column naming.'})
         
         # Infer bin size
-        log("Inferring bin size...")
         inferred_bin = int(round(infer_bin_minutes(df[ts_col])))
         bin_minutes = float(params.get('bin_minutes') or inferred_bin)
-        log(f"Bin size: {bin_minutes} minutes (inferred: {inferred_bin})")
         
         # Parse category lists
-        log("Parsing category lists...")
         allowed_categories = [x.strip() for x in params.get('allowed_categories', 'Normal operation').split(',') if x.strip()]
         disallowed_categories = [x.strip() for x in params.get('disallowed_categories', 'Manufacturer,Unscheduled maintenance').split(',') if x.strip()]
         active_base_categories = [x.strip() for x in params.get('active_base_categories', 'Normal operation').split(',') if x.strip()]
@@ -1092,10 +1035,8 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         power_curve_text = params.get('power_curve_text', '') or ''
         if not power_curve_text.strip():
             return json.dumps({'success': False, 'error': 'Power curve text is required for expected power calculation.'})
-        log('Parsing power curve text...')
         power_curve_df = parse_power_curve_text(power_curve_text)
         power_curve_arrays = prepare_power_curve(power_curve_df)
-        log(f"Power curve parsed: {len(power_curve_df)} wind speed rows, {len(power_curve_df.columns) - 1} air density columns")
         
         # Energy source
         energy_source = params.get('energy_source', 'power')
@@ -1105,7 +1046,6 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         require_nominal = params.get('require_nominal', True)
         require_energy = params.get('require_energy', True)
         energy_threshold_mwh = params.get('energy_threshold_mwh', 54.0)
-        require_zero_alarms = params.get('require_zero_alarms', True)
         
         # Set min_availability based on toggle
         if require_availability:
@@ -1114,11 +1054,10 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             min_availability_pct = 0
         
         # Load alarm file if provided
-        log("Checking for alarm file...")
         alarm_df = None
         alarm_cols = (None, None, None, None)
         if alarm_file_bytes and alarm_file_name:
-            log(f"Loading alarm file: {alarm_file_name} ({len(alarm_file_bytes)} bytes)")
+            log(f"Alarm file loaded: {alarm_file_name}")
             alarm_ext = alarm_file_name.lower().split('.')[-1]
             alarm_buffer = io.BytesIO(bytes(alarm_file_bytes))
             
@@ -1158,14 +1097,10 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         data_sheets = {}
         
         for i, wtg in enumerate(wtgs):
-            log(f"Processing WTG {i+1}/{len(wtgs)}: {wtg}")
-            
             # Slice dataframe for this WTG - columns are always WTG_ColumnName format
             # WTG names are unique (e.g., A01, A02) so no overlap concerns
             prefix = wtg + '_'
             keep_cols = [c for c in df.columns if c == ts_col or c.startswith(prefix)]
-            
-            log(f"  {wtg}: Keeping {len(keep_cols)} columns (prefix='{prefix}')")
             
             # Validate we have the minimum required columns
             wtg_specific_cols = [c for c in keep_cols if c != ts_col]
@@ -1176,7 +1111,6 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             
             # Create isolated copy with fresh index
             wtg_df = df.loc[:, keep_cols].copy().reset_index(drop=True)
-            log(f"  {wtg}: DataFrame shape = {wtg_df.shape}, columns = {wtg_specific_cols[:5]}{'...' if len(wtg_specific_cols) > 5 else ''}")
             
             result = process_wtg_fast(
                 d=wtg_df,
@@ -1208,15 +1142,6 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 candidates = result['candidates']
                 finalize_func = result['finalize']
                 
-                log(f"  {wtg}: {len(candidates)} candidates for final selection")
-                
-                # Log top candidates before any alarm filtering
-                for ci, cand in enumerate(candidates[:5]):
-                    c_active = cand['active_bins'] * bin_minutes / 60.0
-                    c_wall = cand['wall_clock_bins'] * bin_minutes / 60.0
-                    log(f"    Pre-selection #{ci+1}: active={c_active:.1f}h, wall={c_wall:.1f}h, "
-                        f"nominal={cand['nominal_hours']:.1f}h, 3x={cand['contains_3x']}, 1x={cand['contains_1x']}")
-                
                 # If we have alarm data, count alarms for each candidate and prefer windows with 0 alarms
                 if alarm_df is not None and alarm_cols[0] is not None:
                     ts_a, unit_a, type_a, sev_a = alarm_cols
@@ -1233,12 +1158,7 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                         )
                         cand['alarm_count'] = len(filtered)
                     
-                    # Log alarm counts
-                    for ci, cand in enumerate(candidates[:5]):
-                        log(f"    Candidate #{ci+1}: {cand['alarm_count']} alarms/warnings")
-                    
                     # Re-sort candidates: prioritize 0 alarms, then by original criteria
-                    # Original criteria: (meets_nominal, pr_tier, wall_clock_bins, start)
                     def alarm_aware_score(c):
                         meets_nominal = 0 if c['nominal_hours'] >= 24.0 else 1
                         pr_tier = 0 if c['contains_3x'] else (1 if c['contains_1x'] else 2)
@@ -1247,24 +1167,18 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                         return (meets_nominal, pr_tier, alarm_priority, c['alarm_count'], c['wall_clock_bins'], c['start'])
                     
                     candidates.sort(key=alarm_aware_score)
-                    
-                    # Check if we found a 0-alarm window
-                    if candidates[0]['alarm_count'] == 0:
-                        log(f"  {wtg}: Found window with 0 alarms!")
-                    else:
-                        log(f"  {wtg}: No 0-alarm window available, best has {candidates[0]['alarm_count']} alarms")
                 else:
                     # No alarm data - set alarm_count to 0 for all candidates
                     for cand in candidates:
                         cand['alarm_count'] = 0
                 
-                # Select the best candidate (now considering alarms)
+                # Select the best candidate and log final result
                 best_cand = candidates[0]
                 c_active = best_cand['active_bins'] * bin_minutes / 60.0
                 c_wall = best_cand['wall_clock_bins'] * bin_minutes / 60.0
-                log(f"  FINAL: {wtg} selected window: active={c_active:.1f}h, wall={c_wall:.1f}h, "
-                    f"nominal={best_cand['nominal_hours']:.1f}h, 3x={best_cand['contains_3x']}, 1x={best_cand['contains_1x']}, "
-                    f"alarms={best_cand.get('alarm_count', '?')}")
+                energy_floor = "3x" if best_cand['contains_3x'] else ("1x" if best_cand['contains_1x'] else "none")
+                alarm_info = f", alarms={best_cand['alarm_count']}" if alarm_df is not None else ""
+                log(f"  {wtg}: PASSED | active={c_active:.1f}h, nominal={best_cand['nominal_hours']:.1f}h, avail={best_cand['availability_pct']:.1f}%, energy_floor={energy_floor}{alarm_info}")
                 
                 result = finalize_func(best_cand)
             
@@ -1349,14 +1263,17 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 s['Event Details'] = ''
         
         elapsed = round(time.time() - t0, 2)
-        log(f"Analysis complete in {elapsed}s. Preparing results...")
+        
+        # Count passed/failed for summary
+        passed_count = sum(1 for s in summaries if 'PASSED' in str(s.get('Status', '')))
+        failed_count = len(summaries) - passed_count
+        log(f"Analysis complete in {elapsed}s: {passed_count} passed, {failed_count} failed")
         
         # Reorder summary columns to user's specified order
         # Priority columns first, then any remaining columns
         priority_columns = [
             'WTG',
             'Energy Pass/Fail',
-            'Alarms Pass/Fail',
             'Availability (%)',
             'Date of Test Start',
             'Time of Test Start',
@@ -1382,13 +1299,6 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             else:
                 s['Energy Pass/Fail'] = 'N/A (threshold disabled)'
             
-            # Add Alarms Pass/Fail column based on require_zero_alarms
-            if require_zero_alarms:
-                alarm_count = s.get('Events in Window (Alarm/Warning)', 0) or 0
-                s['Alarms Pass/Fail'] = 'PASS' if alarm_count == 0 else 'FAIL'
-            else:
-                s['Alarms Pass/Fail'] = 'N/A (not required)'
-            
             # Build reordered summary
             reordered = {}
             # Add priority columns first (if they exist in summary)
@@ -1410,7 +1320,6 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             'alarm_sheets': alarm_sheets
         }
         output_excel_bytes = None
-        log(f"Cached analysis data: {len(summaries)} summaries, {len(data_sheets)} data sheets, {len(alarm_sheets)} alarm sheets")
         
         # Convert summaries to JSON-serializable format
         summaries_json = []
