@@ -981,7 +981,9 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         full_df = d.copy()
         full_df['_InWindow'] = False
         log_wtg(f"FAILED: {reason}")
-        return {'wtg': wtg, 'summary': diag, 'data_slice': full_df, 'window_start': None, 'window_end': None}
+        # Still include explorer_candidates so failed WTGs show up in Window Explorer
+        return {'wtg': wtg, 'summary': diag, 'data_slice': full_df, 'window_start': None, 'window_end': None,
+                'explorer_candidates': explorer_candidates}
     
     # Fallback doesn't meet 24h nominal but use it anyway
     return finalize_result(fallback)
@@ -1301,6 +1303,81 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                 log(f"  {wtg}: {status_msg} | active={c_active:.1f}h, nominal={best_cand['nominal_hours']:.1f}h, avail={best_cand['availability_pct']:.1f}%, energy={energy_mwh:.1f}MWh, floor={energy_floor}{alarm_info}")
                 
                 result = finalize_func(best_cand)
+            elif 'explorer_candidates' in result:
+                # Failed WTG but has explorer candidates - process them for Window Explorer
+                explorer_cands = result['explorer_candidates']
+                
+                # Count alarms for explorer candidates if alarm data available
+                if alarm_df is not None and alarm_cols[0] is not None:
+                    ts_a, unit_a, type_a, sev_a = alarm_cols
+                    for cand in explorer_cands:
+                        start = pd.to_datetime(cand['test_start'])
+                        end = pd.to_datetime(cand['test_end'])
+                        filtered = filter_alarm_log_for_window(
+                            alarm_df, unit_value=wtg, win_start=start, win_end=end,
+                            ts_col=ts_a, unit_col=unit_a, type_col=type_a,
+                            keep_event_types=keep_event_types, sev_col=sev_a,
+                            min_severity=min_severity
+                        )
+                        
+                        # Count alarms vs warnings separately
+                        alarm_count = 0
+                        warning_count = 0
+                        if type_a and type_a in filtered.columns:
+                            for _, row in filtered.iterrows():
+                                etype = str(row.get(type_a, '')).lower()
+                                if 'alarm' in etype:
+                                    alarm_count += 1
+                                elif 'warning' in etype:
+                                    warning_count += 1
+                                else:
+                                    alarm_count += 1
+                        else:
+                            alarm_count = len(filtered)
+                        
+                        cand['alarm_count'] = alarm_count
+                        cand['warning_count'] = warning_count
+                        cand['event_count'] = alarm_count + warning_count
+                        
+                        # Store event details
+                        cand['alarm_details'] = []
+                        if not filtered.empty:
+                            for _, row in filtered.head(20).iterrows():
+                                alarm_ts = pd.to_datetime(row[ts_a]).strftime('%Y-%m-%d %H:%M') if pd.notna(row[ts_a]) else 'Unknown'
+                                desc = str(row.get('Description', row.get('Message', row.get(type_a, 'Unknown'))))[:100]
+                                etype = str(row.get(type_a, 'Unknown')) if type_a else 'Unknown'
+                                cand['alarm_details'].append({'timestamp': alarm_ts, 'description': desc, 'event_type': etype})
+                else:
+                    for cand in explorer_cands:
+                        cand['alarm_count'] = 0
+                        cand['warning_count'] = 0
+                        cand['event_count'] = 0
+                        cand['alarm_details'] = []
+                
+                # Store top 10 candidates for Window Explorer (all non-viable in this case)
+                top_candidates = []
+                for idx, cand in enumerate(explorer_cands[:10]):
+                    start_ts = pd.to_datetime(cand['test_start'])
+                    end_ts = pd.to_datetime(cand['test_end'])
+                    top_candidates.append({
+                        'index': idx,
+                        'start': start_ts.strftime('%Y-%m-%d %H:%M'),
+                        'end': end_ts.strftime('%Y-%m-%d %H:%M'),
+                        'active_hours': round(cand['active_bins'] * bin_minutes / 60.0, 1),
+                        'wall_hours': round(cand['wall_clock_bins'] * bin_minutes / 60.0, 1),
+                        'nominal_hours': round(cand['nominal_hours'], 1),
+                        'availability_pct': round(cand['availability_pct'], 1),
+                        'energy_mwh': round(cand['energy_kwh'] / 1000.0, 2),
+                        'alarm_count': cand.get('alarm_count', 0),
+                        'warning_count': cand.get('warning_count', 0),
+                        'event_count': cand.get('event_count', 0),
+                        'alarm_details': cand.get('alarm_details', []),
+                        'energy_floor': '3x' if cand['contains_3x'] else ('1x' if cand['contains_1x'] else 'none'),
+                        'viable': cand.get('viable', False),
+                        'issues': cand.get('issues', [])
+                    })
+                wtg_candidates[wtg] = top_candidates
+                log(f"  {wtg}: FAILED - {len(top_candidates)} candidate windows available in explorer")
             
             if result.get('summary'):
                 summaries.append(result['summary'])
