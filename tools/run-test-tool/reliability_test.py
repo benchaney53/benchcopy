@@ -1095,6 +1095,8 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
         log(f"Processing {len(wtgs)} WTGs...")
         summaries = []
         data_sheets = {}
+        wtg_candidates = {}  # Store top candidates per WTG for window explorer
+        pending_selections = []  # WTGs that need user to choose between tied windows
         
         for i, wtg in enumerate(wtgs):
             # Slice dataframe for this WTG - columns are always WTG_ColumnName format
@@ -1157,28 +1159,75 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
                             min_severity=min_severity
                         )
                         cand['alarm_count'] = len(filtered)
+                        # Store alarm details for each candidate
+                        cand['alarm_details'] = []
+                        if not filtered.empty:
+                            for _, row in filtered.head(20).iterrows():  # Limit to 20 for display
+                                alarm_ts = pd.to_datetime(row[ts_a]).strftime('%Y-%m-%d %H:%M') if pd.notna(row[ts_a]) else 'Unknown'
+                                desc = str(row.get('Description', row.get('Message', row.get(type_a, 'Unknown'))))[:100]
+                                cand['alarm_details'].append({'timestamp': alarm_ts, 'description': desc})
                     
-                    # Re-sort candidates: prioritize 0 alarms, then by original criteria
+                    # Re-sort candidates: prioritize fewer alarms, then by original criteria
                     def alarm_aware_score(c):
                         meets_nominal = 0 if c['nominal_hours'] >= 24.0 else 1
                         pr_tier = 0 if c['contains_3x'] else (1 if c['contains_1x'] else 2)
-                        # Prefer 0 alarms, then by alarm count
-                        alarm_priority = 0 if c['alarm_count'] == 0 else 1
-                        return (meets_nominal, pr_tier, alarm_priority, c['alarm_count'], c['wall_clock_bins'], c['start'])
+                        return (meets_nominal, pr_tier, c['alarm_count'], c['wall_clock_bins'], c['start'])
                     
                     candidates.sort(key=alarm_aware_score)
                 else:
                     # No alarm data - set alarm_count to 0 for all candidates
                     for cand in candidates:
                         cand['alarm_count'] = 0
+                        cand['alarm_details'] = []
                 
-                # Select the best candidate and log final result
+                # Store top 10 candidates for window explorer (JSON serializable)
+                top_candidates = []
+                for idx, cand in enumerate(candidates[:10]):
+                    start_ts = pd.to_datetime(cand['test_start'])
+                    end_ts = pd.to_datetime(cand['test_end'])
+                    top_candidates.append({
+                        'index': idx,
+                        'start': start_ts.strftime('%Y-%m-%d %H:%M'),
+                        'end': end_ts.strftime('%Y-%m-%d %H:%M'),
+                        'active_hours': round(cand['active_bins'] * bin_minutes / 60.0, 1),
+                        'wall_hours': round(cand['wall_clock_bins'] * bin_minutes / 60.0, 1),
+                        'nominal_hours': round(cand['nominal_hours'], 1),
+                        'availability_pct': round(cand['availability_pct'], 1),
+                        'energy_mwh': round(cand['energy_kwh'] / 1000.0, 2),
+                        'alarm_count': cand['alarm_count'],
+                        'alarm_details': cand.get('alarm_details', []),
+                        'energy_floor': '3x' if cand['contains_3x'] else ('1x' if cand['contains_1x'] else 'none')
+                    })
+                wtg_candidates[wtg] = top_candidates
+                
+                # Check for ties on the minimum alarm count
+                if len(candidates) > 1:
+                    min_alarm_count = candidates[0]['alarm_count']
+                    tied_candidates = [c for c in candidates if c['alarm_count'] == min_alarm_count]
+                    if len(tied_candidates) > 1:
+                        # Multiple windows tied on alarm count - flag for user selection
+                        pending_selections.append({
+                            'wtg': wtg,
+                            'tied_count': len(tied_candidates),
+                            'alarm_count': min_alarm_count,
+                            'candidates': top_candidates[:len(tied_candidates)]  # Include tied candidates
+                        })
+                
+                # Select the best candidate (first after sorting) and log final result
                 best_cand = candidates[0]
                 c_active = best_cand['active_bins'] * bin_minutes / 60.0
                 c_wall = best_cand['wall_clock_bins'] * bin_minutes / 60.0
                 energy_floor = "3x" if best_cand['contains_3x'] else ("1x" if best_cand['contains_1x'] else "none")
                 alarm_info = f", alarms={best_cand['alarm_count']}" if alarm_df is not None else ""
-                log(f"  {wtg}: PASSED | active={c_active:.1f}h, nominal={best_cand['nominal_hours']:.1f}h, avail={best_cand['availability_pct']:.1f}%, energy_floor={energy_floor}{alarm_info}")
+                
+                # Check min energy requirement at the end
+                energy_mwh = best_cand['energy_kwh'] / 1000.0
+                energy_pass = True
+                if require_energy and energy_threshold_mwh is not None:
+                    energy_pass = energy_mwh >= energy_threshold_mwh
+                
+                status_msg = "PASSED" if energy_pass else "ENERGY_FAIL"
+                log(f"  {wtg}: {status_msg} | active={c_active:.1f}h, nominal={best_cand['nominal_hours']:.1f}h, avail={best_cand['availability_pct']:.1f}%, energy={energy_mwh:.1f}MWh, floor={energy_floor}{alarm_info}")
                 
                 result = finalize_func(best_cand)
             
@@ -1392,7 +1441,9 @@ def run_browser_analysis(file_bytes: bytes, file_name: str, params: dict,
             'alarms_processed': alarms_were_processed,
             'alarm_events_total': alarm_events_total,
             'summaries': summaries_json,
-            'chart_data': chart_data
+            'chart_data': chart_data,
+            'wtg_candidates': wtg_candidates,  # Top 10 candidates per WTG for window explorer
+            'pending_selections': pending_selections  # WTGs with tied alarm counts needing user input
         })
         
     except Exception as e:

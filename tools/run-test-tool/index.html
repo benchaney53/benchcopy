@@ -283,6 +283,47 @@
         body.light-mode .toggle-input { background: white; }
         .toggle-input:disabled { opacity: 0.5; cursor: not-allowed; }
         .toggle-unit { font-size: 0.8rem; color: #888; }
+
+        /* Window Explorer Styles */
+        .window-explorer-card { display: none; }
+        .window-explorer-card.visible { display: block; }
+        .wtg-selector { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color); }
+        .wtg-selector-btn { padding: 0.5rem 1rem; background: rgba(136, 176, 255, 0.15); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); cursor: pointer; font-size: 0.85rem; font-weight: 500; }
+        .wtg-selector-btn:hover { background: rgba(136, 176, 255, 0.25); }
+        .wtg-selector-btn.active { background: var(--accent-color); color: #000; font-weight: 600; border-color: var(--accent-color); }
+        .candidate-list { display: flex; flex-direction: column; gap: 0.75rem; }
+        .candidate-card { background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem; cursor: pointer; transition: all 0.2s; }
+        body.light-mode .candidate-card { background: rgba(0,0,0,0.02); }
+        .candidate-card:hover { border-color: var(--accent-color); background: rgba(136, 176, 255, 0.1); }
+        .candidate-card.selected { border-color: var(--success-color); border-width: 2px; background: rgba(90, 144, 104, 0.1); }
+        .candidate-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+        .candidate-rank { font-weight: 700; font-size: 1.1rem; color: var(--accent-color); }
+        .candidate-alarms { padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+        .candidate-alarms.zero { background: rgba(90, 144, 104, 0.3); color: var(--success-color); }
+        .candidate-alarms.has-alarms { background: rgba(245, 158, 11, 0.3); color: var(--warning-color); }
+        .candidate-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.5rem; font-size: 0.85rem; }
+        .candidate-stat { display: flex; flex-direction: column; }
+        .candidate-stat-label { color: #888; font-size: 0.75rem; }
+        .candidate-stat-value { font-weight: 600; font-family: monospace; }
+        .candidate-details-btn { margin-top: 0.75rem; padding: 0.5rem 1rem; background: rgba(136, 176, 255, 0.2); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-color); cursor: pointer; font-size: 0.8rem; width: 100%; }
+        .candidate-details-btn:hover { background: rgba(136, 176, 255, 0.3); }
+        .no-candidates { color: #888; font-style: italic; padding: 2rem; text-align: center; }
+
+        /* Tied Windows Selection Modal */
+        .tied-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.85); display: none; align-items: center; justify-content: center; z-index: 4000; padding: 2rem; }
+        .tied-modal.visible { display: flex; }
+        .tied-modal-content { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; max-width: 800px; max-height: 90vh; width: 100%; overflow: hidden; display: flex; flex-direction: column; }
+        .tied-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.25rem; border-bottom: 1px solid var(--border-color); }
+        .tied-modal-title { font-size: 1.1rem; font-weight: 600; }
+        .tied-modal-close { background: none; border: none; color: var(--text-color); font-size: 1.5rem; cursor: pointer; opacity: 0.7; }
+        .tied-modal-close:hover { opacity: 1; }
+        .tied-modal-body { overflow-y: auto; padding: 1rem; flex: 1; }
+        .tied-modal-info { padding: 0.75rem 1rem; background: rgba(245, 158, 11, 0.1); border-radius: 6px; margin-bottom: 1rem; font-size: 0.9rem; }
+        .tied-modal-info i { color: var(--warning-color); margin-right: 0.5rem; }
+        .tied-modal-footer { padding: 1rem; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 0.75rem; }
+        .tied-modal-footer .btn { padding: 0.75rem 1.5rem; }
+        .alarm-details-list { margin-top: 0.5rem; padding-left: 1rem; font-size: 0.8rem; color: #888; max-height: 100px; overflow-y: auto; }
+        .alarm-details-list li { margin-bottom: 0.25rem; font-family: monospace; }
     </style>
 </head>
 <body>
@@ -557,6 +598,43 @@
             <button class="btn btn-clear-results" id="clear-results-btn" style="display: none;">
                 <i class="fa-solid fa-trash"></i> Clear Results
             </button>
+        </div>
+    </div>
+
+    <!-- Window Explorer Card -->
+    <div class="card window-explorer-card" id="window-explorer-card">
+        <div class="card-header">
+            <div class="card-icon"><i class="fa-solid fa-magnifying-glass-chart"></i></div>
+            <span class="card-title">Window Explorer</span>
+        </div>
+        <div class="wtg-selector" id="wtg-selector">
+            <!-- WTG buttons will be dynamically added here -->
+        </div>
+        <div class="candidate-list" id="candidate-list">
+            <div class="no-candidates">Select a WTG above to view candidate windows</div>
+        </div>
+    </div>
+
+    <!-- Tied Windows Selection Modal -->
+    <div class="tied-modal" id="tied-modal">
+        <div class="tied-modal-content">
+            <div class="tied-modal-header">
+                <span class="tied-modal-title"><i class="fa-solid fa-code-branch"></i> Multiple Windows Available</span>
+                <button class="tied-modal-close" onclick="closeTiedModal()">&times;</button>
+            </div>
+            <div class="tied-modal-body">
+                <div class="tied-modal-info">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span id="tied-modal-info-text">Multiple windows have the same alarm count. Please select which window to use.</span>
+                </div>
+                <div class="candidate-list" id="tied-candidate-list">
+                    <!-- Tied candidates will be populated here -->
+                </div>
+            </div>
+            <div class="tied-modal-footer">
+                <button class="btn btn-view-report" onclick="closeTiedModal()">Cancel</button>
+                <button class="btn btn-download" id="tied-confirm-btn" onclick="confirmTiedSelection()">Use Selected Window</button>
+            </div>
         </div>
     </div>
 
@@ -1134,6 +1212,174 @@ run_browser_analysis_from_text(input_data_text, input_file_name, params, alarm_t
                 resultsContent.appendChild(stat);
             });
             resultsCard.classList.add('visible');
+            
+            // Show window explorer if we have candidates
+            if (result.wtg_candidates && Object.keys(result.wtg_candidates).length > 0) {
+                setupWindowExplorer(result.wtgs, result.wtg_candidates);
+            }
+            
+            // Show tied windows modal if there are pending selections
+            if (result.pending_selections && result.pending_selections.length > 0) {
+                showTiedWindowsNotice(result.pending_selections);
+            }
+        }
+        
+        // Window Explorer functionality
+        let currentWtgCandidates = {};
+        let selectedTiedCandidate = null;
+        
+        function setupWindowExplorer(wtgs, candidates) {
+            currentWtgCandidates = candidates;
+            const explorerCard = document.getElementById('window-explorer-card');
+            const wtgSelector = document.getElementById('wtg-selector');
+            const candidateList = document.getElementById('candidate-list');
+            
+            // Clear and populate WTG selector
+            wtgSelector.innerHTML = '';
+            wtgs.forEach(wtg => {
+                const btn = document.createElement('button');
+                btn.className = 'wtg-selector-btn';
+                btn.textContent = wtg;
+                btn.onclick = () => selectWtgForExplorer(wtg);
+                wtgSelector.appendChild(btn);
+            });
+            
+            candidateList.innerHTML = '<div class="no-candidates">Select a WTG above to view candidate windows</div>';
+            explorerCard.classList.add('visible');
+        }
+        
+        function selectWtgForExplorer(wtg) {
+            // Update button states
+            document.querySelectorAll('.wtg-selector-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.textContent === wtg);
+            });
+            
+            const candidateList = document.getElementById('candidate-list');
+            const candidates = currentWtgCandidates[wtg];
+            
+            if (!candidates || candidates.length === 0) {
+                candidateList.innerHTML = '<div class="no-candidates">No candidate windows found for this WTG</div>';
+                return;
+            }
+            
+            candidateList.innerHTML = '';
+            candidates.forEach((cand, idx) => {
+                const card = createCandidateCard(cand, idx, wtg);
+                candidateList.appendChild(card);
+            });
+        }
+        
+        function createCandidateCard(cand, idx, wtg, showSelectBtn = false) {
+            const card = document.createElement('div');
+            card.className = 'candidate-card';
+            card.dataset.index = idx;
+            
+            const alarmClass = cand.alarm_count === 0 ? 'zero' : 'has-alarms';
+            const alarmText = cand.alarm_count === 0 ? '0 Alarms' : `${cand.alarm_count} Alarm${cand.alarm_count > 1 ? 's' : ''}`;
+            
+            card.innerHTML = `
+                <div class="candidate-header">
+                    <span class="candidate-rank">#${idx + 1}</span>
+                    <span class="candidate-alarms ${alarmClass}">${alarmText}</span>
+                </div>
+                <div class="candidate-stats">
+                    <div class="candidate-stat">
+                        <span class="candidate-stat-label">Start</span>
+                        <span class="candidate-stat-value">${cand.start}</span>
+                    </div>
+                    <div class="candidate-stat">
+                        <span class="candidate-stat-label">End</span>
+                        <span class="candidate-stat-value">${cand.end}</span>
+                    </div>
+                    <div class="candidate-stat">
+                        <span class="candidate-stat-label">Active Hours</span>
+                        <span class="candidate-stat-value">${cand.active_hours}h</span>
+                    </div>
+                    <div class="candidate-stat">
+                        <span class="candidate-stat-label">Nominal Hours</span>
+                        <span class="candidate-stat-value">${cand.nominal_hours}h</span>
+                    </div>
+                    <div class="candidate-stat">
+                        <span class="candidate-stat-label">Availability</span>
+                        <span class="candidate-stat-value">${cand.availability_pct}%</span>
+                    </div>
+                    <div class="candidate-stat">
+                        <span class="candidate-stat-label">Energy</span>
+                        <span class="candidate-stat-value">${cand.energy_mwh} MWh</span>
+                    </div>
+                    <div class="candidate-stat">
+                        <span class="candidate-stat-label">Energy Floor</span>
+                        <span class="candidate-stat-value">${cand.energy_floor}</span>
+                    </div>
+                </div>
+                ${cand.alarm_details && cand.alarm_details.length > 0 ? `
+                    <ul class="alarm-details-list">
+                        ${cand.alarm_details.slice(0, 5).map(a => `<li>${a.timestamp} - ${a.description}</li>`).join('')}
+                        ${cand.alarm_details.length > 5 ? `<li>... and ${cand.alarm_details.length - 5} more</li>` : ''}
+                    </ul>
+                ` : ''}
+                ${showSelectBtn ? '<button class="candidate-details-btn" onclick="selectTiedCandidate(this)">Select This Window</button>' : ''}
+            `;
+            
+            if (showSelectBtn) {
+                card.onclick = (e) => {
+                    if (e.target.tagName !== 'BUTTON') {
+                        document.querySelectorAll('#tied-candidate-list .candidate-card').forEach(c => c.classList.remove('selected'));
+                        card.classList.add('selected');
+                        selectedTiedCandidate = cand;
+                    }
+                };
+            }
+            
+            return card;
+        }
+        
+        function showTiedWindowsNotice(pendingSelections) {
+            // Show a notice in the console about tied windows
+            pendingSelections.forEach(sel => {
+                log(`⚠️ ${sel.wtg}: ${sel.tied_count} windows tied with ${sel.alarm_count} alarm(s) - using earliest window by default`, 'warning');
+            });
+        }
+        
+        function showTiedModal(wtg, candidates) {
+            const modal = document.getElementById('tied-modal');
+            const infoText = document.getElementById('tied-modal-info-text');
+            const candidateList = document.getElementById('tied-candidate-list');
+            
+            infoText.textContent = `${wtg}: ${candidates.length} windows have the same alarm count (${candidates[0].alarm_count}). Select which window to use.`;
+            
+            candidateList.innerHTML = '';
+            candidates.forEach((cand, idx) => {
+                const card = createCandidateCard(cand, idx, wtg, true);
+                if (idx === 0) card.classList.add('selected');
+                candidateList.appendChild(card);
+            });
+            
+            selectedTiedCandidate = candidates[0];
+            modal.classList.add('visible');
+        }
+        
+        function closeTiedModal() {
+            document.getElementById('tied-modal').classList.remove('visible');
+            selectedTiedCandidate = null;
+        }
+        
+        function selectTiedCandidate(btn) {
+            const card = btn.closest('.candidate-card');
+            document.querySelectorAll('#tied-candidate-list .candidate-card').forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+            const idx = parseInt(card.dataset.index);
+            // Find the candidate by index
+            const candidateList = document.getElementById('tied-candidate-list');
+            const cards = candidateList.querySelectorAll('.candidate-card');
+            // selectedTiedCandidate is set in the card's onclick handler
+        }
+        
+        function confirmTiedSelection() {
+            if (selectedTiedCandidate) {
+                log(`Selected window: ${selectedTiedCandidate.start} to ${selectedTiedCandidate.end}`, 'success');
+                closeTiedModal();
+            }
         }
 
         downloadBtn.addEventListener('click', async () => {
