@@ -895,6 +895,23 @@
 
         function toggleAccordion(id) { document.getElementById(id).classList.toggle('open'); }
 
+        function detectDelimiter(line) {
+            if (line.includes('\t')) {
+                return { delimiter: '\t', label: 'Tab' };
+            }
+            if (line.includes(',')) {
+                return { delimiter: ',', label: 'Comma' };
+            }
+            return { delimiter: 'whitespace', label: 'Whitespace' };
+        }
+
+        function splitLine(line, delimiter) {
+            if (delimiter === 'whitespace') {
+                return line.trim().split(/\s+/);
+            }
+            return line.split(delimiter).map(cell => cell.trim());
+        }
+
         function updateDataStatus(textarea, statusEl, label) {
             const text = textarea.value.trim();
             if (!text) {
@@ -904,8 +921,8 @@
             }
             const lines = text.split('\n').filter(l => l.trim());
             const firstLine = lines[0] || '';
-            const delimiter = firstLine.includes('\t') ? '\t' : ',';
-            const cols = firstLine.split(delimiter).length;
+            const { delimiter } = detectDelimiter(firstLine);
+            const cols = splitLine(firstLine, delimiter).length;
             statusEl.textContent = `${lines.length} rows, ${cols} columns detected`;
             statusEl.classList.add('has-data');
             return { hasData: true, rows: lines.length, cols: cols };
@@ -951,10 +968,10 @@
             const lines = text.split('\n').filter(l => l.trim());
             if (lines.length === 0) return { headers: [], rows: [] };
             const firstLine = lines[0];
-            const delimiter = firstLine.includes('\t') ? '\t' : ',';
-            const headers = firstLine.split(delimiter).map(h => h.trim());
-            const rows = lines.slice(1).map(line => line.split(delimiter).map(cell => cell.trim()));
-            return { headers, rows, delimiter: delimiter === '\t' ? 'Tab' : 'Comma' };
+            const { delimiter, label } = detectDelimiter(firstLine);
+            const headers = splitLine(firstLine, delimiter);
+            const rows = lines.slice(1).map(line => splitLine(line, delimiter));
+            return { headers, rows, delimiter: label };
         }
 
         function showPreview(type) {
