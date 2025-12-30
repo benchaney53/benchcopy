@@ -692,11 +692,11 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                 # Track why this window was rejected (for near-miss diagnostics)
                 rejection_reasons = []
                 if has_bad:
-                    rejection_reasons.append('contains_disqualifying_categories')
+                    rejection_reasons.append('Contains disqualifying categories')
                 if availability_pct + 1e-9 < min_availability_pct:
-                    rejection_reasons.append(f'low_availability_{availability_pct:.1f}%')
+                    rejection_reasons.append(f'Availability {availability_pct:.1f}% < {min_availability_pct}% required')
                 if nominal_hours < 24.0:
-                    rejection_reasons.append(f'low_nominal_{nominal_hours:.1f}h')
+                    rejection_reasons.append(f'Nominal {nominal_hours:.1f}h < 24h required')
                 
                 # Build candidate dict for both valid and near-miss tracking
                 cand = {
@@ -730,7 +730,7 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
                 
                 # Track near-miss regardless (for failure diagnostics)
                 if rejection_reasons or nominal_hours < 24.0:
-                    cand['rejection_reasons'] = rejection_reasons if rejection_reasons else [f'low_nominal_{nominal_hours:.1f}h']
+                    cand['rejection_reasons'] = rejection_reasons if rejection_reasons else [f'Nominal {nominal_hours:.1f}h < 24h required']
                     # Score near-misses: prefer highest nominal hours, then highest availability
                     near_miss_score = (-nominal_hours, -availability_pct, wall_clock_bins)
                     cand['_near_miss_score'] = near_miss_score
@@ -760,6 +760,9 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         if not all_candidates:
             if log_func:
                 log_func(f"    target={target_active_bins} bins: No valid candidates found")
+            # Still return near-miss candidates for the explorer
+            if near_miss_candidates:
+                return {'valid': [], 'near_miss': near_miss_candidates}
             return None
         
         # Sort by score and return best
@@ -774,8 +777,8 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         
         # Don't log individual target searches - too verbose
         
-        # Return ALL valid candidates (sorted), not just the best
-        return all_candidates
+        # Return ALL valid candidates (sorted), plus near-miss candidates for explorer
+        return {'valid': all_candidates, 'near_miss': near_miss_candidates}
     
     # Targets and floors
     target72 = int(round(test_hours * 60 / bin_minutes))
@@ -796,30 +799,49 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
     all_valid_candidates = []
     all_explorer_candidates = []  # For Window Explorer - includes non-viable windows
     
+    all_near_miss_candidates = []  # Track all near-miss candidates for explorer
+    
     for target_bins in range(target72, max_target + 1, step_bins):
-        cands = best_by_priority_active(target_bins, req_mwh_1x, req_mwh_3x, log_func=None)  # No per-target logging
-        if cands:
-            for cand in cands:
-                # Add timestamp info for all candidates
+        result = best_by_priority_active(target_bins, req_mwh_1x, req_mwh_3x, log_func=None)  # No per-target logging
+        if result is None:
+            continue
+        
+        valid_cands = result.get('valid', [])
+        near_miss_cands = result.get('near_miss', [])
+        
+        # Process valid candidates
+        for cand in valid_cands:
+            # Add timestamp info for all candidates
+            cand['test_start'] = d.iloc[cand['start']][ts_col]
+            cand['test_end'] = d.iloc[cand['end']][ts_col]
+            cand['target_bins'] = target_bins
+            
+            # Determine viability and issues
+            issues = []
+            if cand['nominal_hours'] < MIN_NOMINAL_HOURS_REQUIRED:
+                issues.append(f"Nominal {cand['nominal_hours']:.1f}h < 24h required")
+            if cand['availability_pct'] < min_availability_pct:
+                issues.append(f"Availability {cand['availability_pct']:.1f}% < {min_availability_pct}% required")
+            cand['viable'] = len(issues) == 0
+            cand['issues'] = issues
+            
+            # Add to explorer list (all candidates)
+            all_explorer_candidates.append(cand)
+            
+            # Add to valid list only if meets requirements
+            if cand['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED:
+                all_valid_candidates.append(cand)
+        
+        # Also track near-miss candidates for explorer (even when they failed due to bad categories)
+        for cand in near_miss_cands:
+            if 'test_start' not in cand:
                 cand['test_start'] = d.iloc[cand['start']][ts_col]
                 cand['test_end'] = d.iloc[cand['end']][ts_col]
                 cand['target_bins'] = target_bins
-                
-                # Determine viability and issues
-                issues = []
-                if cand['nominal_hours'] < MIN_NOMINAL_HOURS_REQUIRED:
-                    issues.append(f"Nominal {cand['nominal_hours']:.1f}h < 24h required")
-                if cand['availability_pct'] < min_availability_pct:
-                    issues.append(f"Availability {cand['availability_pct']:.1f}% < {min_availability_pct}% required")
-                cand['viable'] = len(issues) == 0
-                cand['issues'] = issues
-                
-                # Add to explorer list (all candidates)
-                all_explorer_candidates.append(cand)
-                
-                # Add to valid list only if meets requirements
-                if cand['nominal_hours'] >= MIN_NOMINAL_HOURS_REQUIRED:
-                    all_valid_candidates.append(cand)
+            # Mark as non-viable and include rejection reasons
+            cand['viable'] = False
+            cand['issues'] = cand.get('rejection_reasons', ['Unknown rejection reason'])
+            all_near_miss_candidates.append(cand)
     
     # Sort all candidates by score and keep top MAX_VALID_CANDIDATES
     def final_score(c):
@@ -837,24 +859,30 @@ def process_wtg_fast(d: pd.DataFrame, ts_col: str, wtg: str,
         pr_tier = 0 if c['contains_3x'] else (1 if c['contains_1x'] else 2)
         return (viable_priority, meets_nominal, pr_tier, c['wall_clock_bins'], c['start'])
     
+    # If no explorer candidates from valid windows, use near-miss candidates
+    if not all_explorer_candidates and all_near_miss_candidates:
+        # Add near-miss candidates to explorer so users can see why they failed
+        all_explorer_candidates = all_near_miss_candidates
+    
     all_explorer_candidates.sort(key=explorer_score)
     explorer_candidates = all_explorer_candidates[:MAX_EXPLORER_CANDIDATES]
     
     # If no window meets requirement, try the max extension as fallback
     fallback = None
     if not valid_candidates:
-        cand_list = best_by_priority_active(max_target, req_mwh_1x, req_mwh_3x, log_func=None)
-        if cand_list:
-            cand = cand_list[0]  # best_by_priority_active now returns a list
+        result = best_by_priority_active(max_target, req_mwh_1x, req_mwh_3x, log_func=None)
+        if result and result.get('valid'):
+            cand = result['valid'][0]
             cand['test_start'] = d.iloc[cand['start']][ts_col]
             cand['test_end'] = d.iloc[cand['end']][ts_col]
             fallback = cand
             log_wtg(f"FALLBACK: Using window with only {cand['nominal_hours']:.1f}h nominal (< 24h required)")
         else:
-            # Log near-miss info for debugging
+            # Log near-miss info for debugging with detailed rejection reasons
             if best_near_miss:
                 nm = best_near_miss
-                log_wtg(f"FAILED: No valid window. Best candidate had nominal={nm['nominal_hours']:.1f}h/24h, avail={nm['availability_pct']:.1f}%")
+                rejection = ', '.join(nm.get('rejection_reasons', ['unknown']))
+                log_wtg(f"FAILED: No valid window. Best candidate had nominal={nm['nominal_hours']:.1f}h/24h, avail={nm['availability_pct']:.1f}%, rejected due to: {rejection}")
 
     # Return candidates for alarm-based selection in main function
     # Diagnostic info for failures
