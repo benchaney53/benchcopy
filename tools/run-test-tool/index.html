@@ -1054,7 +1054,24 @@
             loadingOverlay.classList.add('visible');
             log('Loading Pyodide runtime...', 'info');
             try {
-                pyodide = await loadPyodide();
+                pyodide = await loadPyodide({
+                    stdout: (text) => {
+                        // Capture Python print statements and display in console
+                        if (text && text.trim()) {
+                            // Determine log type based on content
+                            let logType = '';
+                            if (text.includes('PASSED')) logType = 'success';
+                            else if (text.includes('FAILED') || text.includes('ERROR')) logType = 'error';
+                            else if (text.includes('FALLBACK') || text.includes('WARNING')) logType = 'warning';
+                            log(text, logType);
+                        }
+                    },
+                    stderr: (text) => {
+                        if (text && text.trim()) {
+                            log(text, 'error');
+                        }
+                    }
+                });
                 log('Pyodide loaded. Installing packages...', 'info');
                 await pyodide.loadPackage(['pandas', 'numpy', 'micropip']);
                 log('Core packages installed: pandas, numpy', 'success');
