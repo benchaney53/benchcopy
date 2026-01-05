@@ -1,0 +1,1719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Run Test Analyzer | Bench Tools</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="../../assets/sidebar.css">
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+    <style>
+        :root {
+            --card-bg: #3a3a3a;
+            --text-color: #e0e0e0;
+            --border-color: #555;
+            --accent-color: #88b0ff;
+            --success-color: #5a9068;
+            --error-color: #dc3545;
+            --warning-color: #f59e0b;
+        }
+        body.light-mode {
+            --card-bg: white;
+            --text-color: #333;
+            --border-color: #ddd;
+            --accent-color: #007bff;
+            --success-color: #1e7e34;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 24px 28px;
+            padding-right: 340px; /* Space for console sidebar */
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            min-height: 100vh;
+            color: var(--text-color);
+        }
+        body.light-mode {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        }
+
+        .main-content {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .console-sidebar {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 320px;
+            height: 100vh;
+            background: #1a1a1a;
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+        }
+        body.light-mode .console-sidebar { background: #f5f5f5; }
+        .console-header {
+            padding: 12px 16px;
+            background: #252525;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        body.light-mode .console-header { background: #e8e8e8; }
+        .console-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #aaa;
+        }
+        body.light-mode .console-body { color: #444; }
+        .console-clear {
+            margin-left: auto;
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 4px 8px;
+        }
+        .console-clear:hover { color: var(--accent-color); }
+
+        .theme-toggle {
+            position: fixed;
+            top: 20px;
+            right: 340px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50px;
+            padding: 10px 20px;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 1000;
+        }
+        .theme-toggle:hover { background: rgba(255, 255, 255, 0.3); }
+        body.light-mode .theme-toggle { background: rgba(0, 0, 0, 0.1); border-color: rgba(0, 0, 0, 0.2); }
+        .theme-toggle-text { color: white; font-size: 14px; font-weight: 500; }
+        body.light-mode .theme-toggle-text { color: #2c3e50; }
+
+        .back-link { display: inline-block; margin-bottom: 20px; color: #88b0ff; text-decoration: none; }
+        body.light-mode .back-link { color: #007bff; }
+        .back-link:hover { text-decoration: underline; }
+
+        h1 { color: #f0f0f0; text-align: center; margin-bottom: 5px; }
+        body.light-mode h1 { color: #333; }
+        .subtitle { text-align: center; color: #b0b0b0; margin-bottom: 20px; }
+        body.light-mode .subtitle { color: #666; }
+
+        .upload-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+        @media (max-width: 768px) { .upload-row { grid-template-columns: 1fr; } }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        body.light-mode .card { box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+
+        .card-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color); }
+        .card-icon { width: 36px; height: 36px; background: #6a6a6a; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; color: white; }
+        body.light-mode .card-icon { background: #0056b3; }
+        .card-title { font-size: 1.1rem; font-weight: 600; }
+
+        .upload-zone {
+            border: 2px dashed #666;
+            border-radius: 8px;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            background: #2a2a2a;
+            color: #b0b0b0;
+            transition: all 0.3s;
+        }
+        body.light-mode .upload-zone { border-color: #ccc; background: #f8f9fa; color: #666; }
+        .upload-zone:hover, .upload-zone.drag-over { border-color: var(--accent-color); background: rgba(136, 176, 255, 0.1); }
+        .upload-zone.has-file { border-color: var(--success-color); border-style: solid; }
+        .upload-icon { font-size: 2.5rem; margin-bottom: 0.75rem; opacity: 0.7; }
+        .file-name { color: var(--success-color); font-family: monospace; font-size: 0.9rem; margin-top: 0.5rem; }
+        input[type="file"] { display: none; }
+
+        .form-group { margin-bottom: 1rem; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+        label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.5rem; }
+        input[type="number"], input[type="text"], select, textarea {
+            width: 100%;
+            padding: 10px;
+            background: #2a2a2a;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--text-color);
+            font-family: inherit;
+            font-size: 14px;
+        }
+        body.light-mode input, body.light-mode select, body.light-mode textarea { background: white; }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent-color); }
+        textarea { min-height: 120px; font-family: monospace; font-size: 12px; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-primary { width: 100%; background-color: #6a6a6a; color: white; }
+        body.light-mode .btn-primary { background-color: #0056b3; }
+        .btn-primary:hover:not(:disabled) { background-color: #7a7a7a; transform: translateY(-2px); }
+        .btn-primary:disabled { background-color: #444; opacity: 0.5; cursor: not-allowed; }
+        .btn-secondary { background: #555; color: white; padding: 10px 20px; }
+        .btn-secondary:hover { background: #666; }
+
+        .wtg-selector { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 0.5rem; margin-top: 0.5rem; }
+        .wtg-checkbox { display: flex; align-items: center; gap: 0.25rem; font-size: 0.85rem; }
+        .wtg-checkbox input { width: auto; margin: 0; }
+        .wtg-actions { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+        .wtg-actions button { padding: 5px 10px; font-size: 12px; }
+
+        .status-container { margin-top: 1.5rem; }
+        .status-bar { display: flex; align-items: center; gap: 0.75rem; padding: 1rem; background: #2a2a2a; border-radius: 6px; font-family: monospace; font-size: 0.85rem; }
+        body.light-mode .status-bar { background: #f8f9fa; }
+        .status-indicator { width: 10px; height: 10px; border-radius: 50%; background: #888; }
+        .status-indicator.loading { background: var(--warning-color); animation: pulse 1.5s infinite; }
+        .status-indicator.success { background: var(--success-color); }
+        .status-indicator.error { background: var(--error-color); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .progress-bar { width: 100%; height: 4px; background: var(--border-color); border-radius: 2px; margin-top: 0.75rem; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--accent-color); transition: width 0.3s; }
+
+        .results-section { display: none; }
+        .results-section.visible { display: block; }
+
+        .results-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+        .summary-stat { text-align: center; padding: 1rem; background: #2a2a2a; border-radius: 8px; }
+        body.light-mode .summary-stat { background: #f8f9fa; }
+        .summary-stat .value { font-size: 2rem; font-weight: bold; color: var(--accent-color); }
+        .summary-stat .label { font-size: 0.85rem; color: #888; margin-top: 0.25rem; }
+
+        .results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        .results-table th, .results-table td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-color); }
+        .results-table th { background: #2a2a2a; font-weight: 600; position: sticky; top: 0; }
+        body.light-mode .results-table th { background: #f0f0f0; }
+        .results-table tr:hover { background: rgba(136, 176, 255, 0.1); }
+        .results-table tr.clickable-row { cursor: pointer; }
+        .results-table tr.clickable-row:hover { background: rgba(136, 176, 255, 0.2); }
+        .results-table tr.selected-row { background: rgba(136, 176, 255, 0.25); }
+
+        .details-btn { 
+            background: var(--accent-color); 
+            color: white; 
+            border: none; 
+            padding: 4px 10px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 0.8rem; 
+        }
+        .details-btn:hover { opacity: 0.85; }
+
+        .bins-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 0.5rem; }
+        .bins-table th, .bins-table td { padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border-color); }
+        .bins-table th { background: #2a2a2a; font-weight: 600; }
+        body.light-mode .bins-table th { background: #f0f0f0; }
+        .bins-table .nominal { color: #5a9068; font-weight: 600; }
+        .bins-table .non-nominal { color: #e74c3c; }
+
+        .load-more-btn {
+            background: #4a4a4a;
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 1rem;
+            display: block;
+            width: 100%;
+            text-align: center;
+        }
+        .load-more-btn:hover { background: #555; }
+
+        .power-curve-table { border-collapse: collapse; font-size: 0.8rem; }
+        .power-curve-table th, .power-curve-table td { padding: 0.4rem 0.6rem; text-align: right; border: 1px solid var(--border-color); white-space: nowrap; }
+        .power-curve-table th { background: #2a2a2a; font-weight: 600; position: sticky; top: 0; font-size: 0.75rem; }
+        .power-curve-table td:first-child, .power-curve-table th:first-child { text-align: left; background: #252525; position: sticky; left: 0; z-index: 1; }
+        .power-curve-table th:first-child { z-index: 2; }
+        body.light-mode .power-curve-table th { background: #e8e8e8; }
+        body.light-mode .power-curve-table td:first-child, body.light-mode .power-curve-table th:first-child { background: #f5f5f5; }
+        .power-curve-table tr:hover td { background: rgba(136, 176, 255, 0.15); }
+        .power-curve-table tr:hover td:first-child { background: rgba(136, 176, 255, 0.25); }
+
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .modal-content { background: var(--card-bg); border-radius: 8px; max-width: 90vw; max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+        .modal-content.power-curve-modal { min-width: 400px; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; border-bottom: 1px solid var(--border-color); }
+        .modal-header h3 { margin: 0; font-size: 1.1rem; }
+        .modal-close { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-muted); padding: 0; line-height: 1; }
+        .modal-close:hover { color: var(--text-color); }
+        .modal-body { padding: 1rem; overflow: auto; flex: 1; }
+
+        .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+        .status-badge.viable { background: var(--success-color); color: white; }
+        .status-badge.no-viable { background: var(--error-color); color: white; }
+        .status-badge.failed { background: #666; color: white; }
+
+        /* Windows modal styling */
+        #modal-windows-table tr.viable td:nth-child(2) { color: var(--success-color); font-weight: 600; }
+        #modal-windows-table tr.not-viable td:nth-child(2) { color: var(--error-color); font-weight: 600; }
+        #modal-windows-table tr.not-viable { opacity: 0.8; }
+
+        .console-output {
+            background: #1a1a1a;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 1rem;
+            font-family: monospace;
+            font-size: 0.8rem;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            color: #aaa;
+        }
+        body.light-mode .console-output { background: #f5f5f5; color: #333; }
+
+        .chart-container { position: relative; height: 300px; margin-top: 1rem; }
+
+        .collapsible-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            padding: 0.5rem 0;
+        }
+        .collapsible-header:hover { color: var(--accent-color); }
+        .collapsible-content { display: none; padding-top: 1rem; }
+        .collapsible-content.open { display: block; }
+        .chevron { transition: transform 0.3s; }
+        .chevron.open { transform: rotate(180deg); }
+
+        .export-buttons { display: flex; gap: 1rem; margin-top: 1rem; }
+
+        .input-tabs { display: flex; border-bottom: 1px solid var(--border-color); margin-bottom: 1rem; }
+        .input-tab { padding: 0.75rem 1.5rem; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
+        .input-tab:hover { color: var(--accent-color); }
+        .input-tab.active { border-bottom-color: var(--accent-color); color: var(--accent-color); font-weight: 600; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .paste-area { min-height: 200px; font-family: monospace; font-size: 11px; white-space: pre; }
+        .data-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+        .data-actions button { padding: 6px 12px; font-size: 12px; }
+        .saved-indicator { font-size: 0.75rem; color: var(--success-color); margin-left: 0.5rem; }
+    </style>
+</head>
+<body>
+    <!-- Console Sidebar -->
+    <div class="console-sidebar">
+        <div class="console-header">
+            <i class="fa-solid fa-terminal"></i> Console Output
+            <button class="console-clear" onclick="copyConsole()" title="Copy to clipboard"><i class="fa-solid fa-copy"></i></button>
+            <button class="console-clear" onclick="clearConsole()"><i class="fa-solid fa-trash"></i> Clear</button>
+        </div>
+        <div class="console-body" id="console-output"></div>
+    </div>
+
+    <button class="theme-toggle" onclick="toggleTheme()">
+        <span class="theme-toggle-text">Dark</span>
+    </button>
+
+    <div class="main-content">
+    <a href="../../index.html" class="back-link">← Back to Tools</a>
+    
+    <h1><i class="fa-solid fa-wind"></i> Enhanced Run Test Analyzer</h1>
+    <p class="subtitle">Find valid 72-hour reliability test windows from SCADA data per M01 requirements</p>
+
+    <!-- File Upload Section -->
+    <div class="upload-row">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon"><i class="fa-solid fa-table"></i></div>
+                <span class="card-title">SCADA Data (Sheet2)</span>
+                <span class="saved-indicator" id="scada-saved" style="display: none;">✓ Saved</span>
+            </div>
+            <div class="input-tabs">
+                <div class="input-tab active" onclick="switchTab('scada', 'file')">File Upload</div>
+                <div class="input-tab" onclick="switchTab('scada', 'paste')">Paste Data</div>
+            </div>
+            <div id="scada-file-tab" class="tab-content active">
+                <div class="upload-zone" id="scada-drop" onclick="document.getElementById('scada-file').click()">
+                    <div class="upload-icon"><i class="fa-solid fa-file-excel"></i></div>
+                    <div>Drop Excel/CSV file or click to upload</div>
+                    <div class="file-name" id="scada-filename"></div>
+                </div>
+                <input type="file" id="scada-file" accept=".xlsx,.xls,.csv" onchange="handleScadaUpload(this)">
+            </div>
+            <div id="scada-paste-tab" class="tab-content">
+                <textarea id="scada-paste" class="paste-area" placeholder="Paste SCADA data here (TSV or CSV format with headers)..."></textarea>
+                <div class="data-actions">
+                    <button class="btn btn-secondary" onclick="parseScadaPaste()"><i class="fa-solid fa-check"></i> Parse Data</button>
+                    <button class="btn btn-secondary" onclick="saveScadaToStorage()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                    <button class="btn btn-secondary" onclick="loadScadaFromStorage()"><i class="fa-solid fa-rotate-left"></i> Load Saved</button>
+                    <button class="btn btn-secondary" onclick="clearScadaStorage()"><i class="fa-solid fa-trash"></i> Clear Saved</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                <span class="card-title">Alarm Log (Sheet1) - Optional</span>
+                <span class="saved-indicator" id="alarm-saved" style="display: none;">✓ Saved</span>
+            </div>
+            <div class="input-tabs">
+                <div class="input-tab active" onclick="switchTab('alarm', 'file')">File Upload</div>
+                <div class="input-tab" onclick="switchTab('alarm', 'paste')">Paste Data</div>
+            </div>
+            <div id="alarm-file-tab" class="tab-content active">
+                <div class="upload-zone" id="alarm-drop" onclick="document.getElementById('alarm-file').click()">
+                    <div class="upload-icon"><i class="fa-solid fa-file-excel"></i></div>
+                    <div>Drop Excel/CSV file or click to upload</div>
+                    <div class="file-name" id="alarm-filename"></div>
+                </div>
+                <input type="file" id="alarm-file" accept=".xlsx,.xls,.csv" onchange="handleAlarmUpload(this)">
+            </div>
+            <div id="alarm-paste-tab" class="tab-content">
+                <textarea id="alarm-paste" class="paste-area" placeholder="Paste Alarm log data here (TSV or CSV format with headers)..."></textarea>
+                <div class="data-actions">
+                    <button class="btn btn-secondary" onclick="parseAlarmPaste()"><i class="fa-solid fa-check"></i> Parse Data</button>
+                    <button class="btn btn-secondary" onclick="saveAlarmToStorage()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                    <button class="btn btn-secondary" onclick="loadAlarmFromStorage()"><i class="fa-solid fa-rotate-left"></i> Load Saved</button>
+                    <button class="btn btn-secondary" onclick="clearAlarmStorage()"><i class="fa-solid fa-trash"></i> Clear Saved</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- WTG Selection -->
+    <div class="card" id="wtg-selection-card" style="display: none;">
+        <div class="card-header">
+            <div class="card-icon"><i class="fa-solid fa-wind"></i></div>
+            <span class="card-title">WTG Selection</span>
+        </div>
+        <div class="wtg-actions">
+            <button class="btn btn-secondary" onclick="selectAllWtgs()">Select All</button>
+            <button class="btn btn-secondary" onclick="deselectAllWtgs()">Deselect All</button>
+        </div>
+        <div class="wtg-selector" id="wtg-checkboxes"></div>
+    </div>
+
+    <!-- Parameters -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon"><i class="fa-solid fa-sliders"></i></div>
+            <span class="card-title">Analysis Parameters</span>
+            <span class="saved-indicator" id="params-saved" style="display: none;">✓ Saved</span>
+        </div>
+        
+        <div class="form-row-3">
+            <div class="form-group">
+                <label>Rated Power (kW)</label>
+                <input type="number" id="rated-power" value="4200" min="100" step="100" onchange="autoSaveParams()">
+            </div>
+            <div class="form-group">
+                <label>Bin Size (minutes)</label>
+                <input type="number" id="bin-minutes" value="10" min="1" max="60" onchange="autoSaveParams()">
+            </div>
+            <div class="form-group">
+                <label>Test Duration (hours)</label>
+                <input type="number" id="test-hours" value="72" min="1" onchange="autoSaveParams()">
+            </div>
+        </div>
+        
+        <div class="form-row-3">
+            <div class="form-group">
+                <label>Extension Hours</label>
+                <input type="number" id="extension-hours" value="24" min="0" onchange="autoSaveParams()">
+            </div>
+            <div class="form-group">
+                <label>Min Availability (%)</label>
+                <input type="number" id="min-availability" value="96" min="0" max="100" step="0.1" onchange="autoSaveParams()">
+            </div>
+            <div class="form-group">
+                <label>Nominal Threshold (%)</label>
+                <input type="number" id="pr-threshold" value="81" min="0" max="100" step="1" onchange="autoSaveParams()">
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label>Min Nominal Hours</label>
+                <input type="number" id="min-nominal-hours" value="24" min="0" onchange="autoSaveParams()">
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="require-nominal" checked style="width: auto; margin-right: 0.5rem;" onchange="autoSaveParams()">
+                    Require Nominal Hours Check
+                </label>
+            </div>
+        </div>
+
+        <!-- Power Curve (collapsible) -->
+        <div class="collapsible-header" onclick="toggleCollapsible(this)">
+            <span><i class="fa-solid fa-chart-line"></i> Power Curve (Optional)</span>
+            <span class="saved-indicator" id="powercurve-saved" style="display: none; margin-left: 0.5rem;">✓ Saved</span>
+            <i class="fa-solid fa-chevron-down chevron"></i>
+        </div>
+        <div class="collapsible-content">
+            <div class="form-group">
+                <label>Paste power curve table (WS column + air density columns)</label>
+                <textarea id="power-curve" placeholder="WS    1.10    1.15    1.20    1.25
+3     0       0       0       0
+4     100     105     110     115
+5     300     315     330     345
+..."></textarea>
+            </div>
+            <div class="data-actions">
+                <button class="btn btn-secondary" onclick="previewPowerCurve()"><i class="fa-solid fa-table"></i> Preview</button>
+                <button class="btn btn-secondary" onclick="savePowerCurve()"><i class="fa-solid fa-floppy-disk"></i> Save Power Curve</button>
+                <button class="btn btn-secondary" onclick="loadPowerCurve()"><i class="fa-solid fa-rotate-left"></i> Load Saved</button>
+                <button class="btn btn-secondary" onclick="clearPowerCurve()"><i class="fa-solid fa-trash"></i> Clear Saved</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Run Button -->
+    <div class="card">
+        <button class="btn btn-primary" id="run-btn" onclick="runAnalysis()" disabled>
+            <i class="fa-solid fa-play"></i> Run Analysis
+        </button>
+        
+        <div class="status-container" id="status-container" style="display: none;">
+            <div class="status-bar">
+                <div class="status-indicator" id="status-indicator"></div>
+                <span id="status-text">Ready</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Section -->
+    <div class="results-section" id="results-section">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon"><i class="fa-solid fa-chart-bar"></i></div>
+                <span class="card-title">Analysis Results</span>
+            </div>
+
+            <div class="results-summary" id="results-summary"></div>
+
+            <div class="export-buttons">
+                <button class="btn btn-secondary" onclick="exportExcel()">
+                    <i class="fa-solid fa-file-excel"></i> Export Excel
+                </button>
+            </div>
+
+            <div style="overflow-x: auto; margin-top: 1rem;">
+                <table class="results-table" id="results-table">
+                    <thead>
+                        <tr>
+                            <th>WTG</th>
+                            <th>Best Start</th>
+                            <th>Best End</th>
+                            <th>Avail %</th>
+                            <th>Nominal (h)</th>
+                            <th>Energy (MWh)</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="results-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Windows Review Modal -->
+    <div id="windows-modal" class="modal-overlay" style="display: none;" onclick="if(event.target === this) closeWindowsModal()">
+        <div class="modal-content" style="width: 1100px; max-width: 95vw;">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-window-restore"></i> Top Windows for <span id="modal-wtg-name">-</span></h3>
+                <button class="modal-close" onclick="closeWindowsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="modal-windows-info" style="font-size: 0.85rem; color: #888; margin-bottom: 0.75rem;"></div>
+                <div style="overflow-x: auto; max-height: 500px; overflow-y: auto;">
+                    <table class="results-table" id="modal-windows-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Status</th>
+                                <th>Start</th>
+                                <th>End</th>
+                                <th>Avail %</th>
+                                <th>Nominal (h)</th>
+                                <th>Energy (MWh)</th>
+                                <th>Alarms</th>
+                                <th>Warnings</th>
+                                <th>Issues</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modal-windows-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    </div> <!-- end main-content -->
+
+    <script src="../../assets/sidebar.js"></script>
+    <script>
+        // Storage keys
+        const STORAGE_KEYS = {
+            params: 'runtest_params',
+            scadaData: 'runtest_scada_data',
+            alarmData: 'runtest_alarm_data',
+            powerCurve: 'runtest_power_curve'
+        };
+
+        // Global state
+        let scadaData = null;
+        let scadaColumns = [];
+        let alarmData = null;
+        let alarmColumns = [];
+        let detectedWtgs = [];
+        let pyodide = null;
+        let analysisResults = null;
+
+        // Tab switching
+        function switchTab(dataType, tabType) {
+            const tabs = document.querySelectorAll(`#${dataType}-file-tab, #${dataType}-paste-tab`).forEach(t => t.classList.remove('active'));
+            document.getElementById(`${dataType}-${tabType}-tab`).classList.add('active');
+            
+            const tabBtns = document.querySelectorAll(`.card:has(#${dataType}-file-tab) .input-tab`);
+            tabBtns.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        // Theme toggle
+        function toggleTheme() {
+            document.body.classList.toggle('light-mode');
+            const btn = document.querySelector('.theme-toggle-text');
+            btn.textContent = document.body.classList.contains('light-mode') ? 'Light' : 'Dark';
+            localStorage.setItem('theme', document.body.classList.contains('light-mode') ? 'light' : 'dark');
+        }
+
+        // Load saved theme
+        if (localStorage.getItem('theme') === 'light') {
+            document.body.classList.add('light-mode');
+            document.querySelector('.theme-toggle-text').textContent = 'Light';
+        }
+
+        // Console logging
+        function logToConsole(msg) {
+            const el = document.getElementById('console-output');
+            const timestamp = new Date().toLocaleTimeString();
+            el.textContent += `[${timestamp}] ${msg}\n`;
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function clearConsole() {
+            document.getElementById('console-output').textContent = '';
+        }
+
+        function copyConsole() {
+            const text = document.getElementById('console-output').textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                logToConsole('[Copied to clipboard]');
+            }).catch(err => {
+                logToConsole('[Copy failed: ' + err + ']');
+            });
+        }
+
+        // Collapsible sections
+        function toggleCollapsible(header) {
+            const content = header.nextElementSibling;
+            const icon = header.querySelector('.collapsible-icon');
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                if (icon) icon.style.transform = 'rotate(180deg)';
+            } else {
+                content.style.display = 'none';
+                if (icon) icon.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        // =============================================================================
+        // PARAMETER SAVE/LOAD
+        // =============================================================================
+        
+        function getParams() {
+            return {
+                rated_power_kw: parseFloat(document.getElementById('rated-power').value) || 4200,
+                bin_minutes: parseFloat(document.getElementById('bin-minutes').value) || 10,
+                test_hours: parseInt(document.getElementById('test-hours').value) || 72,
+                extension_hours: parseInt(document.getElementById('extension-hours').value) || 24,
+                min_availability_pct: parseFloat(document.getElementById('min-availability').value) || 96,
+                pr_threshold: (parseFloat(document.getElementById('pr-threshold').value) || 81) / 100,
+                require_nominal: document.getElementById('require-nominal').checked,
+                min_nominal_hours: parseFloat(document.getElementById('min-nominal-hours').value) || 24
+            };
+        }
+
+        function setParams(params) {
+            if (!params) return;
+            document.getElementById('rated-power').value = params.rated_power_kw ?? 4200;
+            document.getElementById('bin-minutes').value = params.bin_minutes ?? 10;
+            document.getElementById('test-hours').value = params.test_hours ?? 72;
+            document.getElementById('extension-hours').value = params.extension_hours ?? 24;
+            document.getElementById('min-availability').value = params.min_availability_pct ?? 96;
+            document.getElementById('pr-threshold').value = (params.pr_threshold ?? 0.81) * 100;
+            document.getElementById('require-nominal').checked = params.require_nominal ?? true;
+            document.getElementById('min-nominal-hours').value = params.min_nominal_hours ?? 24;
+        }
+
+        function autoSaveParams() {
+            const params = getParams();
+            localStorage.setItem(STORAGE_KEYS.params, JSON.stringify(params));
+            showSavedIndicator('params-saved');
+        }
+
+        function loadSavedParams() {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEYS.params);
+                if (saved) {
+                    setParams(JSON.parse(saved));
+                    logToConsole('Loaded saved parameters');
+                }
+            } catch (e) {
+                console.error('Failed to load params:', e);
+            }
+        }
+
+        function showSavedIndicator(id) {
+            const el = document.getElementById(id);
+            if (el) {
+                el.style.display = 'inline';
+                setTimeout(() => el.style.display = 'none', 2000);
+            }
+        }
+
+        // =============================================================================
+        // MEMORY OPTIMIZATION - Extract only needed columns for selected WTGs
+        // =============================================================================
+        
+        function filterDataForWtgs(data, columns, selectedWtgs) {
+            // Patterns to look for per WTG
+            const patterns = [
+                'Report Category', 'TurbineState', 'Error Code', 
+                'Grid Production Power', 'Power Avg', 'Power, Average',
+                'WindSpeed', 'Wind speed', 'Airdensity', 'AirDensityAvg'
+            ];
+            
+            // Find timestamp column - always include
+            const timestampCandidates = ['PCTimeStamp', 'Timestamp', 'TimeStamp', 'DateTime', 'Time'];
+            const filteredData = {};
+            
+            // Add timestamp column
+            for (const col of columns) {
+                const cleanCol = col.replace(/\s*\(\d+\)\s*$/, '').trim();
+                for (const ts of timestampCandidates) {
+                    if (cleanCol.toLowerCase() === ts.toLowerCase()) {
+                        filteredData[col] = data[col];
+                        break;
+                    }
+                }
+            }
+            
+            // Add columns for each selected WTG
+            for (const wtg of selectedWtgs) {
+                const wtgUpper = wtg.toUpperCase();
+                for (const col of columns) {
+                    if (filteredData[col]) continue; // Already added
+                    
+                    const cleanCol = col.replace(/\s*\(\d+\)\s*$/, '').trim();
+                    const colUpper = cleanCol.toUpperCase();
+                    
+                    // Check if column starts with WTG prefix
+                    if (colUpper.startsWith(wtgUpper + '_') || 
+                        colUpper.startsWith(wtgUpper + ' ') || 
+                        colUpper.startsWith(wtgUpper + '-')) {
+                        // Check if it matches any pattern we need
+                        for (const pattern of patterns) {
+                            if (cleanCol.toLowerCase().includes(pattern.toLowerCase())) {
+                                filteredData[col] = data[col];
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return filteredData;
+        }
+
+        // =============================================================================
+        // DATA PARSING (TSV/CSV)
+        // =============================================================================
+
+        function parseTextData(text) {
+            if (!text || !text.trim()) return null;
+            
+            const lines = text.trim().split('\n');
+            if (lines.length < 2) return null;
+            
+            // Detect delimiter (tab or comma)
+            const firstLine = lines[0];
+            const delimiter = firstLine.includes('\t') ? '\t' : ',';
+            
+            const headers = lines[0].split(delimiter).map(h => h.trim().replace(/^"|"$/g, ''));
+            const rows = lines.slice(1).map(line => {
+                const cells = line.split(delimiter).map(c => c.trim().replace(/^"|"$/g, ''));
+                return cells;
+            });
+            
+            // Convert to column-based object
+            const columnData = {};
+            headers.forEach((header, idx) => {
+                columnData[header] = rows.map(row => row[idx] ?? null);
+            });
+            
+            return { data: columnData, columns: headers, rowCount: rows.length };
+        }
+
+        // =============================================================================
+        // SCADA DATA HANDLERS
+        // =============================================================================
+
+        function handleScadaUpload(input) {
+            if (!input.files.length) return;
+            const file = input.files[0];
+            document.getElementById('scada-filename').textContent = file.name;
+            document.getElementById('scada-drop').classList.add('has-file');
+            logToConsole(`Loading SCADA file: ${file.name}`);
+            
+            parseExcelFile(file, (data, columns) => {
+                scadaData = data;
+                scadaColumns = columns;
+                logToConsole(`SCADA data loaded: ${Object.values(data)[0]?.length || 0} rows, ${columns.length} columns`);
+                detectAndShowWtgs();
+                updateRunButton();
+            });
+        }
+
+        function parseScadaPaste() {
+            const text = document.getElementById('scada-paste').value;
+            const result = parseTextData(text);
+            if (result) {
+                scadaData = result.data;
+                scadaColumns = result.columns;
+                logToConsole(`SCADA data parsed: ${result.rowCount} rows, ${result.columns.length} columns`);
+                detectAndShowWtgs();
+                updateRunButton();
+            } else {
+                logToConsole('Error: Could not parse SCADA data. Ensure it has headers and data rows.');
+            }
+        }
+
+        function saveScadaToStorage() {
+            const text = document.getElementById('scada-paste').value;
+            if (!text.trim()) {
+                logToConsole('Error: No SCADA data to save');
+                return;
+            }
+            try {
+                const compressed = LZString.compressToUTF16(text);
+                localStorage.setItem(STORAGE_KEYS.scadaData, compressed);
+                showSavedIndicator('scada-saved');
+                logToConsole(`SCADA data saved (${(compressed.length / 1024).toFixed(1)} KB compressed)`);
+            } catch (e) {
+                logToConsole(`Error saving SCADA data: ${e.message}`);
+            }
+        }
+
+        function loadScadaFromStorage() {
+            try {
+                const compressed = localStorage.getItem(STORAGE_KEYS.scadaData);
+                if (compressed) {
+                    const text = LZString.decompressFromUTF16(compressed);
+                    document.getElementById('scada-paste').value = text;
+                    logToConsole('SCADA data loaded from storage');
+                    parseScadaPaste();
+                    // Switch to paste tab
+                    switchTab('scada', 'paste');
+                } else {
+                    logToConsole('No saved SCADA data found');
+                }
+            } catch (e) {
+                logToConsole(`Error loading SCADA data: ${e.message}`);
+            }
+        }
+
+        function clearScadaStorage() {
+            localStorage.removeItem(STORAGE_KEYS.scadaData);
+            logToConsole('Saved SCADA data cleared');
+        }
+
+        // =============================================================================
+        // ALARM DATA HANDLERS
+        // =============================================================================
+
+        function handleAlarmUpload(input) {
+            if (!input.files.length) return;
+            const file = input.files[0];
+            document.getElementById('alarm-filename').textContent = file.name;
+            document.getElementById('alarm-drop').classList.add('has-file');
+            logToConsole(`Loading Alarm file: ${file.name}`);
+            
+            parseExcelFile(file, (data, columns) => {
+                alarmData = data;
+                alarmColumns = columns;
+                logToConsole(`Alarm data loaded: ${Object.values(data)[0]?.length || 0} rows`);
+            });
+        }
+
+        function parseAlarmPaste() {
+            const text = document.getElementById('alarm-paste').value;
+            const result = parseTextData(text);
+            if (result) {
+                alarmData = result.data;
+                alarmColumns = result.columns;
+                logToConsole(`Alarm data parsed: ${result.rowCount} rows, ${result.columns.length} columns`);
+            } else {
+                logToConsole('Error: Could not parse Alarm data. Ensure it has headers and data rows.');
+            }
+        }
+
+        function saveAlarmToStorage() {
+            const text = document.getElementById('alarm-paste').value;
+            if (!text.trim()) {
+                logToConsole('Error: No Alarm data to save');
+                return;
+            }
+            try {
+                const compressed = LZString.compressToUTF16(text);
+                localStorage.setItem(STORAGE_KEYS.alarmData, compressed);
+                showSavedIndicator('alarm-saved');
+                logToConsole(`Alarm data saved (${(compressed.length / 1024).toFixed(1)} KB compressed)`);
+            } catch (e) {
+                logToConsole(`Error saving Alarm data: ${e.message}`);
+            }
+        }
+
+        function loadAlarmFromStorage() {
+            try {
+                const compressed = localStorage.getItem(STORAGE_KEYS.alarmData);
+                if (compressed) {
+                    const text = LZString.decompressFromUTF16(compressed);
+                    document.getElementById('alarm-paste').value = text;
+                    logToConsole('Alarm data loaded from storage');
+                    parseAlarmPaste();
+                    // Switch to paste tab
+                    switchTab('alarm', 'paste');
+                } else {
+                    logToConsole('No saved Alarm data found');
+                }
+            } catch (e) {
+                logToConsole(`Error loading Alarm data: ${e.message}`);
+            }
+        }
+
+        function clearAlarmStorage() {
+            localStorage.removeItem(STORAGE_KEYS.alarmData);
+            logToConsole('Saved Alarm data cleared');
+        }
+
+        // =============================================================================
+        // POWER CURVE HANDLERS
+        // =============================================================================
+
+        function savePowerCurve() {
+            const text = document.getElementById('power-curve').value;
+            if (!text.trim()) {
+                logToConsole('Error: No power curve to save');
+                return;
+            }
+            localStorage.setItem(STORAGE_KEYS.powerCurve, text);
+            showSavedIndicator('powercurve-saved');
+            logToConsole('Power curve saved');
+        }
+
+        function loadPowerCurve() {
+            const saved = localStorage.getItem(STORAGE_KEYS.powerCurve);
+            if (saved) {
+                document.getElementById('power-curve').value = saved;
+                document.getElementById('powercurve-saved').style.display = 'inline';
+                document.getElementById('powercurve-saved').textContent = '✓ Loaded';
+                logToConsole('Power curve auto-loaded from storage');
+            }
+        }
+
+        function clearPowerCurve() {
+            localStorage.removeItem(STORAGE_KEYS.powerCurve);
+            document.getElementById('power-curve').value = '';
+            document.getElementById('power-curve-preview').style.display = 'none';
+            logToConsole('Saved power curve cleared');
+        }
+
+        function previewPowerCurve() {
+            const text = document.getElementById('power-curve').value;
+            if (!text.trim()) {
+                logToConsole('Error: No power curve to preview');
+                return;
+            }
+            
+            try {
+                // Parse the power curve text
+                const lines = text.trim().split('\n').filter(l => l.trim());
+                if (lines.length < 2) {
+                    logToConsole('Error: Power curve needs at least header and one data row');
+                    return;
+                }
+                
+                // Find the header row - it should have multiple numeric values (air densities)
+                // Skip rows that are titles like "Air density [kg/m3]"
+                let headerLineIdx = 0;
+                let adValues = [];
+                
+                for (let i = 0; i < Math.min(5, lines.length); i++) {
+                    const tokens = lines[i].split(/[\s,\t]+/).filter(t => t.trim());
+                    // Count how many numeric values are in this line
+                    const numericTokens = tokens.filter(t => !isNaN(parseFloat(t)) && parseFloat(t) > 0);
+                    
+                    // Header should have multiple air density values (typically 0.9-1.3 range)
+                    // Look for a line with at least 3 numeric values that look like air densities
+                    const adLikeTokens = numericTokens.filter(t => {
+                        const v = parseFloat(t);
+                        return v >= 0.8 && v <= 1.4; // Air density range
+                    });
+                    
+                    if (adLikeTokens.length >= 3 || numericTokens.length >= 5) {
+                        headerLineIdx = i;
+                        // Find where numbers start
+                        const numStart = tokens.findIndex(t => !isNaN(parseFloat(t)));
+                        if (numStart >= 0) {
+                            adValues = tokens.slice(numStart).map(parseFloat).filter(v => !isNaN(v));
+                        }
+                        break;
+                    }
+                }
+                
+                if (adValues.length === 0) {
+                    // Fallback: use first line and parse it
+                    const headerTokens = lines[0].split(/[\s,\t]+/).filter(t => t.trim());
+                    const numStart = headerTokens.findIndex(t => !isNaN(parseFloat(t)));
+                    if (numStart >= 0) {
+                        adValues = headerTokens.slice(numStart).map(parseFloat).filter(v => !isNaN(v));
+                    }
+                }
+                
+                if (adValues.length === 0) {
+                    logToConsole('Error: Could not find air density values in power curve header');
+                    return;
+                }
+                
+                // Sort air density values for display (but keep original order for reference)
+                const sortedAD = [...adValues].sort((a, b) => a - b);
+                
+                // Build table HTML
+                let html = '<table class="power-curve-table"><thead><tr>';
+                html += '<th>WS (m/s)</th>';
+                sortedAD.forEach(ad => {
+                    html += `<th>${ad.toFixed(3)}</th>`;
+                });
+                html += '</tr></thead><tbody>';
+                
+                // Parse data rows - start after the header line
+                let rowCount = 0;
+                for (let i = headerLineIdx + 1; i < lines.length; i++) {
+                    const tokens = lines[i].split(/[\s,\t]+/).filter(t => t.trim());
+                    if (tokens.length === 0) continue;
+                    
+                    // Handle split rows (WS on one line, values on next)
+                    let ws, values;
+                    if (tokens.length === 1 && !isNaN(parseFloat(tokens[0])) && i + 1 < lines.length) {
+                        ws = parseFloat(tokens[0]);
+                        const nextTokens = lines[i + 1].split(/[\s,\t]+/).filter(t => t.trim());
+                        if (nextTokens.every(t => !isNaN(parseFloat(t)))) {
+                            values = nextTokens.map(parseFloat);
+                            i++; // Skip next line
+                        } else {
+                            continue;
+                        }
+                    } else if (tokens.length >= 2) {
+                        ws = parseFloat(tokens[0]);
+                        values = tokens.slice(1).map(parseFloat);
+                    } else {
+                        continue;
+                    }
+                    
+                    if (isNaN(ws)) continue;
+                    
+                    // Create map of AD -> power for this row
+                    const adPowerMap = {};
+                    for (let j = 0; j < Math.min(adValues.length, values.length); j++) {
+                        adPowerMap[adValues[j]] = values[j];
+                    }
+                    
+                    // Build row with sorted AD columns
+                    html += `<tr><td><strong>${ws.toFixed(1)}</strong></td>`;
+                    sortedAD.forEach(ad => {
+                        const power = adPowerMap[ad];
+                        html += `<td>${power !== undefined ? power.toFixed(0) : '-'}</td>`;
+                    });
+                    html += '</tr>';
+                    rowCount++;
+                }
+                
+                html += '</tbody></table>';
+                html += `<div style="margin-top: 0.75rem; font-size: 0.85rem; color: var(--text-muted);">`;
+                html += `<strong>${rowCount}</strong> wind speed rows × <strong>${sortedAD.length}</strong> air density columns`;
+                html += `<br>AD range: ${sortedAD[0].toFixed(3)} - ${sortedAD[sortedAD.length-1].toFixed(3)} kg/m³`;
+                html += `</div>`;
+                
+                document.getElementById('power-curve-modal-body').innerHTML = html;
+                document.getElementById('power-curve-modal').style.display = 'flex';
+                
+                logToConsole(`Power curve preview: ${rowCount} WS rows, ${sortedAD.length} AD columns`);
+            } catch (err) {
+                logToConsole('Error parsing power curve: ' + err.message);
+            }
+        }
+
+        function closePowerCurveModal() {
+            document.getElementById('power-curve-modal').style.display = 'none';
+        }
+
+        // =============================================================================
+        // FILE PARSING
+        // =============================================================================
+
+        function parseExcelFile(file, callback) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                    
+                    // Use first sheet
+                    const sheetName = workbook.SheetNames[0];
+                    const sheet = workbook.Sheets[sheetName];
+                    
+                    // Convert to JSON with headers
+                    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, dateNF: 'yyyy-mm-dd hh:mm:ss' });
+                    
+                    if (jsonData.length < 2) {
+                        logToConsole('Error: File has no data rows');
+                        return;
+                    }
+                    
+                    const headers = jsonData[0].map(h => String(h || '').trim());
+                    const rows = jsonData.slice(1);
+                    
+                    // Convert to column-based object for efficient transfer
+                    const columnData = {};
+                    headers.forEach((header, idx) => {
+                        columnData[header] = rows.map(row => row[idx] ?? null);
+                    });
+                    
+                    callback(columnData, headers);
+                } catch (err) {
+                    logToConsole(`Error parsing file: ${err.message}`);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function detectAndShowWtgs() {
+            if (!scadaColumns.length) return;
+            
+            // Detect WTG prefixes from column names
+            const wtgPattern = /^([A-Z]\d{2})[_\s-]/i;
+            const wtgSet = new Set();
+            scadaColumns.forEach(col => {
+                const match = col.match(wtgPattern);
+                if (match) wtgSet.add(match[1].toUpperCase());
+            });
+            
+            detectedWtgs = Array.from(wtgSet).sort();
+            logToConsole(`Detected ${detectedWtgs.length} WTGs: ${detectedWtgs.join(', ')}`);
+            
+            // Show WTG selection card
+            const card = document.getElementById('wtg-selection-card');
+            card.style.display = 'block';
+            
+            // Create checkboxes (all checked by default)
+            const container = document.getElementById('wtg-checkboxes');
+            container.innerHTML = detectedWtgs.map(wtg => `
+                <label class="wtg-checkbox">
+                    <input type="checkbox" value="${wtg}" checked>
+                    ${wtg}
+                </label>
+            `).join('');
+        }
+
+        function selectAllWtgs() {
+            document.querySelectorAll('#wtg-checkboxes input').forEach(cb => cb.checked = true);
+        }
+
+        function deselectAllWtgs() {
+            document.querySelectorAll('#wtg-checkboxes input').forEach(cb => cb.checked = false);
+        }
+
+        function getSelectedWtgs() {
+            const checkboxes = document.querySelectorAll('#wtg-checkboxes input:checked');
+            return Array.from(checkboxes).map(cb => cb.value);
+        }
+
+        function updateRunButton() {
+            const btn = document.getElementById('run-btn');
+            btn.disabled = !scadaData || !scadaColumns.length;
+        }
+
+        // Drag and drop
+        ['scada-drop', 'alarm-drop'].forEach(id => {
+            const zone = document.getElementById(id);
+            zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
+            zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+            zone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                zone.classList.remove('drag-over');
+                const file = e.dataTransfer.files[0];
+                if (file) {
+                    const input = document.getElementById(id === 'scada-drop' ? 'scada-file' : 'alarm-file');
+                    const dt = new DataTransfer();
+                    dt.items.add(file);
+                    input.files = dt.files;
+                    input.dispatchEvent(new Event('change'));
+                }
+            });
+        });
+
+        // Initialize Pyodide
+        async function initPyodide() {
+            logToConsole('Loading Python runtime (Pyodide)...');
+            setStatus('loading', 'Loading Python runtime...');
+            
+            try {
+                pyodide = await loadPyodide({
+                    indexURL: "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/"
+                });
+                
+                // Redirect Python stdout to console (use raw mode for real-time output)
+                pyodide.setStdout({ 
+                    raw: (charCode) => {
+                        // Buffer characters until newline
+                        if (!window._pyStdoutBuffer) window._pyStdoutBuffer = '';
+                        const char = String.fromCharCode(charCode);
+                        if (char === '\n') {
+                            if (window._pyStdoutBuffer.trim()) {
+                                logToConsole(window._pyStdoutBuffer);
+                            }
+                            window._pyStdoutBuffer = '';
+                        } else {
+                            window._pyStdoutBuffer += char;
+                        }
+                    }
+                });
+                pyodide.setStderr({ 
+                    raw: (charCode) => {
+                        if (!window._pyStderrBuffer) window._pyStderrBuffer = '';
+                        const char = String.fromCharCode(charCode);
+                        if (char === '\n') {
+                            if (window._pyStderrBuffer.trim()) {
+                                logToConsole(`[ERROR] ${window._pyStderrBuffer}`);
+                            }
+                            window._pyStderrBuffer = '';
+                        } else {
+                            window._pyStderrBuffer += char;
+                        }
+                    }
+                });
+                
+                logToConsole('Installing Python packages...');
+                await pyodide.loadPackage(['numpy', 'pandas', 'micropip']);
+                await pyodide.runPythonAsync(`
+                    import micropip
+                    await micropip.install('openpyxl')
+                `);
+                
+                // Load analysis script
+                logToConsole('Loading analysis module...');
+                const response = await fetch('analysis.py');
+                const code = await response.text();
+                await pyodide.runPythonAsync(code);
+                
+                logToConsole('Python runtime ready!');
+                setStatus('success', 'Ready');
+                updateRunButton();
+            } catch (err) {
+                logToConsole(`Failed to initialize Python: ${err.message}`);
+                setStatus('error', 'Python init failed');
+            }
+        }
+
+        function setStatus(state, text) {
+            const container = document.getElementById('status-container');
+            const indicator = document.getElementById('status-indicator');
+            const statusText = document.getElementById('status-text');
+            
+            container.style.display = 'block';
+            indicator.className = 'status-indicator ' + state;
+            statusText.textContent = text;
+        }
+
+        function setProgress(pct) {
+            document.getElementById('progress-fill').style.width = pct + '%';
+        }
+
+        // Run analysis
+        async function runAnalysis() {
+            if (!pyodide || !scadaData) {
+                logToConsole('Error: Not ready to run analysis');
+                return;
+            }
+
+            if (!alarmData || !alarmColumns.length) {
+                logToConsole('Error: Alarm log is required. Please load alarm data first.');
+                setStatus('error', 'Alarm log required');
+                return;
+            }
+
+            const powerCurveText = document.getElementById('power-curve').value || '';
+            if (!powerCurveText.trim()) {
+                logToConsole('Error: Power curve is required. Please paste power curve data first.');
+                setStatus('error', 'Power curve required');
+                return;
+            }
+
+            const selectedWtgs = getSelectedWtgs();
+            if (selectedWtgs.length === 0) {
+                logToConsole('Error: No WTGs selected');
+                return;
+            }
+
+            const btn = document.getElementById('run-btn');
+            btn.disabled = true;
+            setStatus('loading', 'Running analysis...');
+            setProgress(10);
+
+            try {
+                // Get parameters (auto-saved)
+                const params = getParams();
+
+                logToConsole(`Starting analysis with ${selectedWtgs.length} WTGs...`);
+                logToConsole(`Extracting data for selected WTGs only to save memory...`);
+                setProgress(15);
+
+                // Extract only columns needed for selected WTGs to reduce memory
+                const filteredData = filterDataForWtgs(scadaData, scadaColumns, selectedWtgs);
+                const filteredColumns = Object.keys(filteredData);
+                logToConsole(`Reduced from ${scadaColumns.length} to ${filteredColumns.length} columns`);
+                
+                setProgress(20);
+
+                // Pass filtered data to Python (much smaller than full dataset)
+                pyodide.globals.set('js_scada_data', pyodide.toPy(filteredData));
+                pyodide.globals.set('js_scada_columns', pyodide.toPy(filteredColumns));
+                
+                pyodide.globals.set('js_alarm_data', alarmData ? pyodide.toPy(alarmData) : pyodide.toPy(null));
+                pyodide.globals.set('js_alarm_columns', alarmColumns.length ? pyodide.toPy(alarmColumns) : pyodide.toPy(null));
+                pyodide.globals.set('js_power_curve', powerCurveText);
+                pyodide.globals.set('js_selected_wtgs', pyodide.toPy(selectedWtgs));
+                pyodide.globals.set('js_params', pyodide.toPy(params));
+
+                setProgress(25);
+
+                // Initialize analysis (parses power curve, alarm log, etc)
+                const initResultJson = await pyodide.runPythonAsync(`
+                    import json
+                    init_result = init_analysis(
+                        scada_data=dict(js_scada_data),
+                        scada_columns=list(js_scada_columns),
+                        alarm_data=dict(js_alarm_data) if js_alarm_data else None,
+                        alarm_columns=list(js_alarm_columns) if js_alarm_columns else None,
+                        power_curve_text=js_power_curve,
+                        selected_wtgs=list(js_selected_wtgs),
+                        params=dict(js_params)
+                    )
+                    json.dumps(init_result)
+                `);
+                
+                const initResult = JSON.parse(initResultJson);
+                const totalWtgs = initResult.count;
+                logToConsole(`Initialized: ${totalWtgs} WTGs to process`);
+                
+                setProgress(30);
+                
+                // Process WTGs one at a time with UI yields between each
+                let processed = 0;
+                while (processed < totalWtgs) {
+                    // Yield to browser to update UI
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                    
+                    // Process next WTG
+                    const stepResultJson = await pyodide.runPythonAsync(`
+                        import json
+                        step_result = process_next_wtg()
+                        json.dumps(step_result)
+                    `);
+                    
+                    const stepResult = JSON.parse(stepResultJson);
+                    if (stepResult.done) break;
+                    
+                    processed++;
+                    const pct = 30 + Math.round((processed / totalWtgs) * 60);
+                    setProgress(pct);
+                }
+                
+                setProgress(92);
+                
+                // Finalize and get full results
+                const finalResultJson = await pyodide.runPythonAsync(`
+                    import json
+                    final_result = finalize_analysis()
+                    json.dumps(final_result)
+                `);
+                
+                analysisResults = JSON.parse(finalResultJson);
+                
+                setProgress(95);
+                
+                // Clean up Pyodide globals to free memory (but keep scada data for bin details)
+                try {
+                    pyodide.runPython(`
+                        import gc
+                        # Keep js_scada_data and js_scada_columns for bin details lookup
+                        for var in ['js_alarm_data', 'js_alarm_columns', 'js_power_curve', 'js_selected_wtgs', 'js_params']:
+                            if var in dir():
+                                exec(f'del {var}')
+                        gc.collect()
+                    `);
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+                
+                displayResults(analysisResults);
+                
+                setStatus('success', 'Analysis complete!');
+                setProgress(100);
+                logToConsole('Analysis complete!');
+
+            } catch (err) {
+                logToConsole(`Analysis error: ${err.message}`);
+                setStatus('error', 'Analysis failed');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function displayResults(data) {
+            const section = document.getElementById('results-section');
+            section.classList.add('visible');
+            
+            // Remove any previous failed section
+            const oldFailedSection = section.querySelector('.failed-wtgs-section');
+            if (oldFailedSection) oldFailedSection.remove();
+
+            // Separate successful and failed WTGs
+            const successful = data.results.filter(r => r.viable_count > 0);
+            const failed = data.results.filter(r => r.viable_count === 0);
+
+            // Summary stats
+            const summary = data.summary;
+            document.getElementById('results-summary').innerHTML = `
+                <div class="summary-stat">
+                    <div class="value" style="color: #27ae60;">${summary.wtgs_with_viable}</div>
+                    <div class="label">Successful WTGs</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="value" style="color: #e74c3c;">${summary.wtgs_processed - summary.wtgs_with_viable}</div>
+                    <div class="label">Failed WTGs</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="value">${summary.wtgs_processed}</div>
+                    <div class="label">Total Analyzed</div>
+                </div>
+            `;
+
+            // Results table - ONLY successful windows
+            const tbody = document.getElementById('results-tbody');
+            
+            if (successful.length > 0) {
+                tbody.innerHTML = successful.map(r => {
+                    const best = r.windows[0];
+                    return `
+                        <tr class="clickable-row" data-wtg="${r.wtg}" data-start="${best.start_idx}" data-end="${best.end_idx}">
+                            <td><strong>${r.wtg}</strong></td>
+                            <td>${formatDateTime(best.start_time)}</td>
+                            <td>${formatDateTime(best.end_time)}</td>
+                            <td>${best.availability_pct}%</td>
+                            <td>${best.nominal_hours}</td>
+                            <td>${best.energy_mwh.toFixed(1)}</td>
+                            <td><button class="details-btn" onclick="showWindowsModal('${r.wtg}', event)"><i class="fa-solid fa-window-restore"></i> Windows</button></td>
+                        </tr>
+                    `;
+                }).join('');
+            } else {
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 2rem; color: #e74c3c;">No viable windows found for any WTG</td></tr>`;
+            }
+
+            // Add failed WTGs section if any
+            if (failed.length > 0) {
+                const failedSection = document.createElement('div');
+                failedSection.className = 'card failed-wtgs-section';
+                failedSection.style.marginTop = '1rem';
+                failedSection.innerHTML = `
+                    <div class="collapsible-header" onclick="toggleCollapsible(this)">
+                        <span>❌ Failed WTGs (${failed.length})</span>
+                        <i class="fa-solid fa-chevron-down collapsible-icon"></i>
+                    </div>
+                    <div class="collapsible-content" style="display: none; max-height: 300px; overflow-y: auto;">
+                        <table class="results-table" style="margin-top: 0.5rem;">
+                            <thead>
+                                <tr>
+                                    <th>WTG</th>
+                                    <th>Total Alarms</th>
+                                    <th>Failure Reason</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${failed.map(r => {
+                                    return `
+                                    <tr>
+                                        <td><strong>${r.wtg}</strong></td>
+                                        <td>${r.total_alarms || 0}</td>
+                                        <td style="color: #e74c3c;">${r.reason || 'Unknown'}</td>
+                                        <td><button class="details-btn" onclick="showWindowsModal('${r.wtg}', event)"><i class="fa-solid fa-window-restore"></i> Windows</button></td>
+                                    </tr>
+                                `}).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+                section.appendChild(failedSection);
+            }
+
+            // Hide windows modal when displaying new results
+            closeWindowsModal();
+
+            section.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Windows Review functionality
+        let currentWindowsData = { wtg: null, windows: [], displayCount: 10 };
+
+        function showWindowsModal(wtg, event) {
+            if (event) event.stopPropagation();
+            
+            // Find the result for this WTG from analysisResults
+            // analysisResults is { results: [...], summary: {...} }
+            const resultsArray = analysisResults?.results || analysisResults || [];
+            const wtgResult = Array.isArray(resultsArray) ? resultsArray.find(r => r.wtg === wtg) : null;
+            if (!wtgResult || !wtgResult.all_candidates) {
+                alert('No window data available for this WTG');
+                return;
+            }
+            
+            currentWindowsData = { wtg, windows: wtgResult.all_candidates || [], displayCount: 10 };
+            
+            document.getElementById('modal-wtg-name').textContent = wtg;
+            document.getElementById('windows-modal').style.display = 'flex';
+            
+            // Highlight selected row
+            document.querySelectorAll('.results-table tr.selected-row').forEach(tr => tr.classList.remove('selected-row'));
+            const clickedRow = document.querySelector(`tr[data-wtg="${wtg}"]`);
+            if (clickedRow) clickedRow.classList.add('selected-row');
+            
+            renderWindows();
+        }
+
+        function renderWindows() {
+            const { windows, displayCount } = currentWindowsData;
+            const totalWindows = windows.length;
+            const toShow = windows.slice(0, displayCount);
+            
+            // Update info
+            document.getElementById('modal-windows-info').textContent = 
+                `Showing top ${Math.min(displayCount, totalWindows)} of ${totalWindows} candidate windows (sorted: viable first, then by fewest alarms, fewest warnings, most nominal hours)`;
+            
+            // Render windows
+            const tbody = document.getElementById('modal-windows-tbody');
+            const windowsHtml = toShow.map((w, i) => {
+                const statusClass = w.viable ? 'viable' : 'not-viable';
+                const statusIcon = w.viable ? '✓' : '✗';
+                const statusText = w.viable ? 'Viable' : 'Not Viable';
+                const issuesList = w.issues && w.issues.length > 0 ? w.issues.join('; ') : '-';
+                const extLabel = w.is_extended ? ` (+${w.extension_hours || 0}h ext.)` : '';
+                
+                return `
+                    <tr class="${statusClass}">
+                        <td>${i + 1}</td>
+                        <td class="${statusClass}">${statusIcon} ${statusText}</td>
+                        <td>${formatBinTimestamp(w.start_time)}${extLabel}</td>
+                        <td>${formatBinTimestamp(w.end_time)}</td>
+                        <td>${w.availability_pct !== null ? w.availability_pct.toFixed(1) + '%' : '-'}</td>
+                        <td>${w.nominal_hours !== null ? w.nominal_hours.toFixed(2) : '-'}</td>
+                        <td>${w.energy_mwh !== null ? w.energy_mwh.toFixed(2) : '-'}</td>
+                        <td>${w.alarm_count || 0}</td>
+                        <td>${w.warning_count || 0}</td>
+                        <td style="max-width: 250px; white-space: normal; font-size: 0.8rem;">${issuesList}</td>
+                    </tr>
+                `;
+            }).join('');
+            
+            tbody.innerHTML = windowsHtml || '<tr><td colspan="10" style="text-align: center; color: #888;">No candidate windows found</td></tr>';
+        }
+
+        function closeWindowsModal() {
+            document.getElementById('windows-modal').style.display = 'none';
+            document.querySelectorAll('.results-table tr.selected-row').forEach(tr => tr.classList.remove('selected-row'));
+            currentWindowsData = { wtg: null, windows: [], displayCount: 10 };
+        }
+
+        function formatBinTimestamp(isoStr) {
+            if (!isoStr) return '-';
+            try {
+                const d = new Date(isoStr);
+                return d.toLocaleString('en-US', { 
+                    month: 'short', day: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                });
+            } catch {
+                return isoStr;
+            }
+        }
+
+        function formatDateTime(isoStr) {
+            if (!isoStr) return '-';
+            try {
+                const d = new Date(isoStr);
+                return d.toLocaleString('en-US', { 
+                    month: 'short', day: 'numeric', 
+                    hour: '2-digit', minute: '2-digit' 
+                });
+            } catch {
+                return isoStr;
+            }
+        }
+
+        async function exportExcel() {
+            if (!pyodide) return;
+            
+            try {
+                logToConsole('Generating Excel export...');
+                await pyodide.runPythonAsync('generate_excel()');
+                const bytes = pyodide.runPython('get_excel_bytes()').toJs();
+                
+                const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `run_test_analysis_${new Date().toISOString().slice(0,10)}.xlsx`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                logToConsole('Excel exported successfully');
+            } catch (err) {
+                logToConsole(`Export error: ${err.message}`);
+            }
+        }
+
+        // Load Pyodide on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            // Load saved parameters and power curve
+            loadSavedParams();
+            loadPowerCurve();
+            
+            // Auto-load and parse saved SCADA data
+            if (localStorage.getItem(STORAGE_KEYS.scadaData)) {
+                try {
+                    const compressed = localStorage.getItem(STORAGE_KEYS.scadaData);
+                    const text = LZString.decompressFromUTF16(compressed);
+                    if (text) {
+                        document.getElementById('scada-paste').value = text;
+                        const result = parseTextData(text);
+                        if (result) {
+                            scadaData = result.data;
+                            scadaColumns = result.columns;
+                            logToConsole(`SCADA data auto-loaded: ${result.rowCount} rows, ${result.columns.length} columns`);
+                            detectAndShowWtgs();
+                            updateRunButton();
+                        }
+                    }
+                    document.getElementById('scada-saved').style.display = 'inline';
+                    document.getElementById('scada-saved').textContent = '✓ Loaded';
+                } catch (e) {
+                    logToConsole(`Error auto-loading SCADA: ${e.message}`);
+                }
+            }
+            
+            // Auto-load and parse saved Alarm data
+            if (localStorage.getItem(STORAGE_KEYS.alarmData)) {
+                try {
+                    const compressed = localStorage.getItem(STORAGE_KEYS.alarmData);
+                    const text = LZString.decompressFromUTF16(compressed);
+                    if (text) {
+                        document.getElementById('alarm-paste').value = text;
+                        const result = parseTextData(text);
+                        if (result) {
+                            alarmData = result.data;
+                            alarmColumns = result.columns;
+                            logToConsole(`Alarm data auto-loaded: ${result.rowCount} rows, ${result.columns.length} columns`);
+                        }
+                    }
+                    document.getElementById('alarm-saved').style.display = 'inline';
+                    document.getElementById('alarm-saved').textContent = '✓ Loaded';
+                } catch (e) {
+                    logToConsole(`Error auto-loading Alarm: ${e.message}`);
+                }
+            }
+            
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js';
+            script.onload = initPyodide;
+            document.head.appendChild(script);
+        });
+    </script>
+
+    <!-- Power Curve Preview Modal -->
+    <div id="power-curve-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content power-curve-modal">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-chart-line"></i> Power Curve Preview</h3>
+                <button class="modal-close" onclick="closePowerCurveModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="power-curve-modal-body">
+            </div>
+        </div>
+    </div>
+</body>
+</html>
