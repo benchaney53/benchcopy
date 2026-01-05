@@ -33,6 +33,24 @@ def log(msg):
     sys.stdout.flush()
 
 
+def to_json_serializable(obj):
+    """Recursively convert numpy types to Python native types for JSON serialization."""
+    if isinstance(obj, dict):
+        return {to_json_serializable(k): to_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [to_json_serializable(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    else:
+        return obj
+
+
 # =============================================================================
 # COLUMN DETECTION
 # =============================================================================
@@ -876,7 +894,8 @@ def process_wtg(
     del df
     gc.collect()
     
-    return {
+    # Convert all numpy types to Python native types for JSON serialization
+    return to_json_serializable({
         'wtg': wtg,
         'status': 'OK' if viable_count > 0 else 'NO_VIABLE_WINDOW',
         'reason': '' if viable_count > 0 else failure_reason,
@@ -885,7 +904,7 @@ def process_wtg(
         'near_miss_candidates': near_miss_candidates[:10],  # Top 10 near-miss windows
         'viable_count': viable_count,
         'total_alarms': alarm_count
-    }
+    })
 
 
 # =============================================================================
@@ -1010,14 +1029,15 @@ def run_analysis(
         }
     }
     
-    return {
+    # Convert all numpy types to Python native types for JSON serialization
+    return to_json_serializable({
         'results': results,
         'summary': {
             'wtgs_processed': len(wtgs_to_process),
             'wtgs_with_viable': viable_wtgs,
             'total_viable_windows': total_viable
         }
-    }
+    })
 
 
 def get_window_bins(
