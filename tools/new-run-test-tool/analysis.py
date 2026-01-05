@@ -737,35 +737,41 @@ def process_wtg(
                     # Continue searching for better windows
                     all_viable_candidates.append(cand)
                 
-                # If base window passes hard rules but doesn't have enough nominal, try extending
-                # Only extend if base window passes: no disqualified bins and meets energy requirement
-                base_passes_hard_rules = ('Energy' not in ' '.join(cand.get('issues', [])) and 
-                                          cand is not None)
+                # Try extending if base window doesn't meet nominal hours OR energy requirement
+                # Only extend if base window has no disqualified bins
+                has_disqualified = cand.get('disqualified_bins', 0) > 0
+                needs_more_nominal = require_nominal and cand['nominal_hours'] < min_nominal_hours
+                needs_more_energy = cand.get('energy_kwh', 0) < min_energy_kwh
                 
-                if base_passes_hard_rules and require_nominal and cand['nominal_hours'] < min_nominal_hours and max_bins > target_bins:
-                    # Try extending the window to get more nominal hours
-                    # Use minimum extension needed to reach target nominal hours
+                if not has_disqualified and (needs_more_nominal or needs_more_energy) and max_bins > target_bins:
+                    # Try extending the window to get more nominal hours and/or energy
                     extended_e = e
                     extended_active = active_count
                     current_nominal = cand['nominal_hours']
+                    current_energy = cand.get('energy_kwh', 0)
                     
-                    # Extend incrementally, checking if we've reached the nominal target
+                    # Extend incrementally until we meet both targets or hit max
                     while extended_e + 1 < N and extended_active < max_bins:
                         extended_e += 1
                         if active[extended_e]:
                             extended_active += 1
+                            # Add energy from this bin
+                            bin_power = power[extended_e] if np.isfinite(power[extended_e]) else 0
+                            current_energy += bin_power * (bin_minutes / 60.0)
                         
                         # Check if this bin adds nominal time
                         if nominal[extended_e] and active[extended_e]:
                             current_nominal += (bin_minutes / 60.0)
-                            
-                            # If we've reached the target, stop extending
-                            if current_nominal >= min_nominal_hours:
-                                break
+                        
+                        # If we've reached both targets, stop extending
+                        nominal_met = current_nominal >= min_nominal_hours or not require_nominal
+                        energy_met = current_energy >= min_energy_kwh
+                        if nominal_met and energy_met:
+                            break
                     
                     if extended_active > active_count:
-                        # Extended window - is_base_window=False since energy was checked on base
-                        ext_cand = check_window(s, extended_e, is_base_window=False)
+                        # Extended window - check with is_base_window=True to validate energy on extended window
+                        ext_cand = check_window(s, extended_e, is_base_window=True)
                         if ext_cand:
                             # Mark as extended window
                             ext_cand['is_extended'] = True

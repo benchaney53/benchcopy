@@ -69,7 +69,7 @@ WS    1.10    1.15    1.20    1.25
 | Requirement | Implementation |
 |-------------|----------------|
 | Nominal power hours | Window must accumulate user-specified nominal runtime hours |
-| Extension for low nominal | If base window has no disqualifying categories but insufficient nominal hours, extend by minimum time needed |
+| Extension for insufficient nominal/energy | If base window has no disqualifying categories but insufficient nominal hours or energy, extend by minimum time needed |
 | Prefer fewer alarms | Select window with fewest alarms, then fewest warnings |
 | Cooling systems functional | Power > 50% rated power |
 
