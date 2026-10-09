@@ -7,19 +7,6 @@
     "icon": "📁"
   },
   {
-    "id": "new-run-test-tool",
-    "name": "Enhanced Run Test Analyzer",
-    "description": "Analyzes wind turbine SCADA data to find valid 72-hour run test windows based on M01 contractual reliability requirements. Features memory-efficient per-WTG processing, fault code 3-strike detection, availability tracking, and nominal power validation.",
-    "icon": "<i class=\"fa-solid fa-wind\"></i>",
-    "category": "Wind Analysis",
-    "technologies": [
-      "Python",
-      "Pyodide",
-      "Pandas",
-      "NumPy"
-    ]
-  },
-  {
     "id": "pdf-form-checker",
     "name": "PDF Form Field Checker",
     "description": "Compare PDF form fields between a control PDF and review PDFs to identify mismatches",
@@ -44,10 +31,35 @@
     ]
   },
   {
+    "id": "pdf-serial-crosscheck",
+    "name": "PDF Serial Cross-Check",
+    "description": "Verify job book serials and VUIs against the ROMC across all construction documents",
+    "icon": "<i class=\"fa-solid fa-barcode\"></i>",
+    "category": "PDF Tools",
+    "technologies": [
+      "PDF.js",
+      "JSZip",
+      "JavaScript"
+    ]
+  },
+  {
     "id": "run-test-tool",
     "name": "Run Test Tool",
     "description": "Find optimal reliability and HOTS test windows from SCADA data. Analyzes WTG availability, power output, and category compliance.",
     "icon": "<i class=\"fa-solid fa-bolt\"></i>",
+    "category": "Wind Analysis",
+    "technologies": [
+      "Python",
+      "Pyodide",
+      "Pandas",
+      "NumPy"
+    ]
+  },
+  {
+    "id": "new-run-test-tool",
+    "name": "Enhanced Run Test Analyzer",
+    "description": "Analyzes wind turbine SCADA data to find valid 72-hour run test windows based on M01 contractual reliability requirements. Features memory-efficient per-WTG processing, fault code 3-strike detection, availability tracking, and nominal power validation.",
+    "icon": "<i class=\"fa-solid fa-wind\"></i>",
     "category": "Wind Analysis",
     "technologies": [
       "Python",

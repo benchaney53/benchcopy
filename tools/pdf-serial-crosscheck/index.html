@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Serial Cross-Check</title>
+    <style>
+        * { box-sizing: border-box; }
+
+        /* Theme tokens: dark is the bench default, light via body.light-mode */
+        body {
+            --fg: #e0e0e0; --heading: #f0f0f0; --muted: #b0b0b0; --line: #555;
+            --panel: #3a3a3a; --inset: #2a2a2a; --accent: #88b0ff;
+            --ok: #7bc97f; --ok-bg: #2a3a2d; --bad: #e08a8a; --bad-bg: #3a2a2a;
+            --warn: #d4b56f; --warn-bg: #3a3626;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 1200px; margin: 0 auto; padding: 20px; min-height: 100vh; color: var(--fg);
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            transition: background 0.3s ease;
+        }
+        body.light-mode {
+            --fg: #333; --heading: #333; --muted: #666; --line: #ddd;
+            --panel: #fff; --inset: #f8f9fa; --accent: #007bff;
+            --ok: #155724; --ok-bg: #d4edda; --bad: #b02a37; --bad-bg: #f8d7da;
+            --warn: #856404; --warn-bg: #fff3cd;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        }
+
+        .theme-toggle {
+            position: fixed; top: 20px; right: 20px; z-index: 1000;
+            background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50px; padding: 10px 20px; cursor: pointer; backdrop-filter: blur(10px);
+            display: flex; align-items: center; gap: 10px; transition: all 0.3s ease;
+        }
+        .theme-toggle:hover { background: rgba(255,255,255,0.3); transform: scale(1.05); }
+        body.light-mode .theme-toggle { background: rgba(0,0,0,0.1); border-color: rgba(0,0,0,0.2); }
+        .theme-toggle-icon { width: 20px; height: 20px; stroke: white; }
+        body.light-mode .theme-toggle-icon { stroke: #2c3e50; }
+        .theme-toggle-text { color: white; font-size: 14px; font-weight: 500; }
+        body.light-mode .theme-toggle-text { color: #2c3e50; }
+
+        .back-link { display: inline-block; margin-bottom: 20px; color: var(--accent); text-decoration: none; font-size: 14px; }
+        .back-link:hover { text-decoration: underline; }
+        h1 { color: var(--heading); text-align: center; margin: 10px 0 5px; }
+        .description { text-align: center; color: var(--muted); margin: 5px 0 20px; }
+
+        .container {
+            background: var(--panel); padding: 30px; border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3); transition: background 0.3s ease;
+        }
+        body.light-mode .container { box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h2 { color: var(--heading); font-size: 1.2em; margin: 0 0 12px; }
+
+        .upload-area {
+            border: 2px dashed var(--line); border-radius: 8px; padding: 30px; text-align: center;
+            cursor: pointer; color: var(--muted); transition: border-color 0.3s, background-color 0.3s;
+        }
+        .upload-area:hover, .upload-area.dragover { border-color: var(--accent); }
+        .upload-area.dragover { background-color: rgba(136,176,255,0.1); }
+        .upload-area .fa-file-pdf { font-size: 32px; margin-right: 8px; vertical-align: middle; }
+        input[type="file"] { display: none; }
+
+        .docs { list-style: none; padding: 0; margin: 12px 0; }
+        .docs li { padding: 10px 12px; background: var(--inset); border-radius: 6px; margin: 6px 0; }
+        .docs .meta { color: var(--muted); font-size: 13px; }
+        .docs details { margin: 6px 0; }
+        .docs summary { cursor: pointer; }
+
+        .btn {
+            background-color: #6a6a6a; color: white; padding: 10px 20px; border: none; border-radius: 6px;
+            cursor: pointer; font-size: 15px; font-weight: 600; transition: all 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        body.light-mode .btn { background-color: #0056b3; box-shadow: 0 4px 6px rgba(0,0,0,0.15); }
+        .btn:hover { background-color: #7a7a7a; transform: translateY(-2px); }
+        body.light-mode .btn:hover { background-color: #004085; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-success { background-color: #5a9068; }
+        body.light-mode .btn-success { background-color: #1e7e34; }
+        .btn-small { padding: 4px 10px; font-size: 12px; box-shadow: none; }
+        .button-group { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 16px 0 24px; }
+
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-bottom: 24px; }
+        fieldset { border: 2px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 0; }
+        legend { font-weight: 600; color: var(--heading); padding: 0 6px; }
+        label { display: block; margin: 6px 0; }
+        textarea, input[type="text"] {
+            width: 100%; font: 12px/1.4 ui-monospace, Consolas, monospace; color: var(--fg);
+            background: var(--inset); border: 1px solid var(--line); border-radius: 6px; padding: 6px; margin-top: 4px;
+        }
+        textarea { min-height: 90px; resize: vertical; }
+        code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+        .hint { color: var(--muted); font-size: 12px; }
+        .err { color: var(--bad); font-size: 13px; }
+
+        .summary p { margin: 0 0 12px; }
+        .summary span { display: inline-block; padding: 4px 10px; border-radius: 12px; margin: 0 6px 6px 0; font-weight: 700; font-size: 13px; }
+        .tablewrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); color: var(--fg); }
+        th { background-color: var(--inset); color: var(--heading); font-weight: 600; font-size: 13px; }
+        body.light-mode th { background-color: #1F4E78; color: white; }
+        tr:hover td { background-color: var(--inset); }
+
+        .st { display: inline-block; font-weight: 700; font-size: 11px; padding: 3px 8px; border-radius: 12px; white-space: nowrap; }
+        .st-match { color: var(--ok); background: var(--ok-bg); }
+        .st-mismatch { color: var(--bad); background: var(--bad-bg); }
+        .st-missing, .st-single { color: var(--warn); background: var(--warn-bg); }
+        .chip { display: inline-block; font: 12px ui-monospace, Consolas, monospace; padding: 2px 6px; border-radius: 4px; margin: 1px 2px; border: 1px solid; }
+        .chip.ok { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); }
+        .chip.bad { color: var(--bad); border-color: var(--bad); background: var(--bad-bg); }
+        .chip.warn { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+        .none { color: var(--muted); font-style: italic; }
+        .src { color: var(--muted); font-size: 11px; }
+        [hidden] { display: none !important; }
+        .st-ok { color: var(--ok); background: var(--ok-bg); }
+        .st-bad { color: var(--bad); background: var(--bad-bg); }
+        .st-warn { color: var(--warn); background: var(--warn-bg); }
+        .st-neutral { color: var(--muted); background: var(--inset); }
+        .chip.neutral { color: var(--fg); border-color: var(--line); background: var(--inset); }
+        .warn-text { color: var(--warn); }
+        .progress { color: var(--muted); font-size: 13px; min-height: 1.2em; margin-top: 8px; }
+        .docs li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 6px 10px; margin: 4px 0; }
+        .docs .docname { font-weight: 600; flex: 1 1 260px; }
+        .docs details { flex-basis: auto; margin: 0; }
+        .docs details[open] { flex-basis: 100%; }
+        .docs details textarea { min-height: 220px; margin-top: 6px; }
+        .docs .ref { margin: 0; font-size: 12px; color: var(--muted); white-space: nowrap; }
+        .modes { margin: 0 0 14px; }
+        .modes label { margin: 6px 0; }
+        td.notes { font-size: 13px; max-width: 380px; }
+        td .exp { font-weight: 600; }
+        .extra { margin-top: 18px; }
+        .extra summary { cursor: pointer; margin-bottom: 8px; }
+
+        /* Links that open a document page in the viewer */
+        a.open { color: var(--accent); text-decoration: none; }
+        a.open:hover { text-decoration: underline; }
+        .docs .docname a.open { color: var(--heading); }
+        .docs .docname a.open:hover { color: var(--accent); }
+        .mark { display: inline-block; margin-top: 4px; font-size: 11px; font-weight: 700; }
+        .mark-verified { color: var(--ok); }
+        .mark-issue { color: var(--bad); }
+        tr.row-verified td { opacity: 0.7; }
+
+        /* Document viewer overlay */
+        body.snc-viewer-open { overflow: hidden; }
+        .snc-viewer { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,0.6); display: flex; padding: 12px; }
+        .viewer-box { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--panel); border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); overflow: hidden; }
+        .viewer-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+        .viewer-title { flex: 1 1 320px; min-width: 0; color: var(--heading); }
+        .viewer-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .viewer-step, .viewer-mark { display: inline-flex; gap: 6px; align-items: center; }
+        .viewer-count { color: var(--muted); font-size: 12px; min-width: 56px; text-align: center; }
+        .viewer-mark .btn.active.mark-ok { background-color: #2e7d32; }
+        .viewer-mark .btn.active.mark-bad { background-color: #b02a37; }
+        .viewer-panes { flex: 1; display: flex; min-height: 0; }
+        .viewer-panes .pane { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+        .viewer-panes .pane:last-child { border-right: none; }
+        .pane-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; background: var(--inset); font-size: 13px; }
+        .pane-bar select { flex: 1 1 180px; min-width: 0; max-width: 100%; padding: 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); }
+        .pane-bar button { min-width: 28px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; font-size: 14px; }
+        .pane-bar button:hover { border-color: var(--accent); }
+        .pane-nav { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+        .pane-page { width: 52px; padding: 3px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); text-align: center; }
+        .pane-tab { color: var(--accent); text-decoration: none; white-space: nowrap; }
+        .pane-msg { padding: 4px 10px; font-size: 12px; color: var(--muted); min-height: 1.3em; }
+        .pane-body { position: relative; flex: 1; overflow: auto; padding: 8px 12px 16px; background: #525659; }
+        .pane-pages { display: flex; flex-direction: column; align-items: center; gap: 12px; width: max-content; min-width: 100%; }
+        .pane-page-box { position: relative; flex: none; box-shadow: 0 2px 8px rgba(0,0,0,0.4); background: white; }
+        .pane-page-box canvas { display: block; position: absolute; inset: 0; z-index: 1; }
+        .pane-page-box .page-num { position: absolute; top: 45%; left: 0; right: 0; text-align: center; color: #bbb; font-size: 28px; z-index: 0; }
+        .pane-page-box .pane-hl { z-index: 2; }
+        .pane-hl { position: absolute; inset: 0; pointer-events: none; }
+        .pane-hl .hl { position: absolute; background: rgba(255, 213, 0, 0.35); outline: 2px solid #ff9800; border-radius: 2px; }
+        @media (max-width: 800px) {
+            .snc-viewer { padding: 0; }
+            .viewer-box { border-radius: 0; }
+            .snc-viewer.split .viewer-panes { flex-direction: column; }
+            .viewer-panes .pane { border-right: none; border-bottom: 1px solid var(--line); }
+        }
+    </style>
+</head>
+<body>
+    <div class="theme-toggle" id="theme-toggle">
+        <svg class="theme-toggle-icon" id="theme-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
+        <span class="theme-toggle-text" id="theme-text">Light</span>
+    </div>
+
+    <a href="../../home.html" class="back-link">&larr; Back to Tools</a>
+
+    <h1>PDF Serial Cross-Check</h1>
+    <p class="description">Verify job book serial numbers and VUIs against the Recording of Main Components. Files are read in your browser and never uploaded.</p>
+
+    <div class="container" id="snc">
+        <h2>1. Load documents</h2>
+        <div class="upload-area" id="snc-drop">
+            <p><i class="fas fa-file-pdf"></i> Drop the job book folder, its .zip, or PDFs here &mdash; or click to choose PDFs</p>
+            <p><button type="button" class="btn btn-small" id="snc-pick-folder">Choose a folder…</button></p>
+            <input type="file" id="snc-file" accept="application/pdf,.pdf,.zip,application/zip" multiple>
+            <input type="file" id="snc-folder" webkitdirectory directory multiple>
+        </div>
+        <div class="progress" id="snc-progress" aria-live="polite"></div>
+        <ul class="docs" id="snc-docs"></ul>
+        <div class="button-group">
+            <button class="btn" id="snc-clear">Clear documents</button>
+            <button class="btn btn-success" id="snc-csv" disabled>
+                <img src="../../assets/icons/download.svg" alt="" style="width:16px;height:16px;vertical-align:middle;margin-right:5px;"> Export CSV
+            </button>
+        </div>
+
+        <h2>2. How to check</h2>
+        <div class="modes">
+            <label><input type="radio" name="snc-mode" value="jobbook" checked> <strong>Job book check</strong> &mdash; verify every serial/VUI in the reference (ROMC) against the other documents</label>
+            <label><input type="radio" name="snc-mode" value="fields"> <strong>Field compare</strong> &mdash; compare same-named fields or text patterns across documents</label>
+        </div>
+
+        <div class="grid" data-mode="jobbook">
+            <fieldset>
+                <legend>Required cross-checks</legend>
+                <label>One rule per line: <code>ROMC item regex | file name regex [| photo]</code>
+                    <textarea id="snc-jbrules" style="min-height:150px"># From the Job Book Inspection Guide. Add "| photo" when the evidence is a picture.
+^4\.6\b.*(vui|serial) | rescue.?kit | photo
+^9\.2\b.*(vui|serial) | high.?voltage.?cable|hv.?cable | photo
+^10\b.*(vui|serial|ferrule) | service.?lift | photo
+^11\.\d+\b.*(vui|batch) | bolt.?cert|flange
+^13\.[23]\b.*(vui|serial) | aviation|faa|obstruction</textarea>
+                </label>
+                <div class="hint">A ROMC value matching the left side must appear in a loaded document whose file name matches the right side. Item labels are shown in the results table.</div>
+                <div class="err" id="snc-jberr"></div>
+            </fieldset>
+            <fieldset>
+                <legend>Reference values</legend>
+                <label>Skip ROMC rows whose label matches (regex)
+                    <input type="text" id="snc-skip" value="item number|\btype\b|manufacturer|weight|date|year|initials|site name|wind farm|frequency|\bmk\b|version|comment|project|country|^wtg\b|^pad\b">
+                </label>
+                <div class="hint">Values must contain a digit and at least 5 letters/digits; dates, years, weights and N/A are ignored. Matching ignores spaces and punctuation. Values separated by commas or &amp; (e.g. bolt batches) are checked separately.</div>
+                <label><input type="checkbox" id="snc-vuifirst" checked> Check the VUI, not the serial number (serial is used only when a component has no VUI)</label>
+                <label><input type="checkbox" id="snc-issuesonly"> Issues only</label>
+            </fieldset>
+        </div>
+
+        <div class="grid" data-mode="fields" hidden>
+            <fieldset>
+                <legend>Fillable form fields</legend>
+                <label><input type="checkbox" id="snc-usefields" checked> Compare AcroForm field values</label>
+                <label>Field name filter (regex, blank = all fields)
+                    <input type="text" id="snc-fieldfilter" value="serial|s\/?n\b|sn$|_sn|sn_">
+                </label>
+                <label><input type="checkbox" id="snc-mintwo" checked> Only show fields found in 2+ documents</label>
+                <label>Field aliases (one per line: <code>Name = alias1, alias2</code>)
+                    <textarea id="snc-aliases" placeholder="Nacelle serial = Nacelle_SN, nacelle_sn, NacelleSerialNo&#10;Hub serial = Hub_SN, hub_serial"></textarea>
+                </label>
+                <div class="hint">Use aliases when forms name the same field differently. Use a text rule's label (e.g. <code>Nacelle serial</code>) as the name to compare form fields against flat PDFs in one row.</div>
+            </fieldset>
+
+            <fieldset>
+                <legend>Text patterns (flat / non-fillable PDFs)</legend>
+                <label><input type="checkbox" id="snc-usetext" checked> Search page text with these rules</label>
+                <label>One rule per line: <code>Label | regex</code> (capture group 1 = the serial)
+                    <textarea id="snc-rules" style="min-height:130px">Serial number (any) | (?:serial\s*(?:no\.?|number|#)|s\/n)\s*[:#.]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{3,})
+Nacelle serial | nacelle[^\n]{0,40}?(?:serial\s*(?:no\.?|number|#)|s\/n)\s*[:#.]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{3,})
+Hub serial | hub[^\n]{0,40}?(?:serial\s*(?:no\.?|number|#)|s\/n)\s*[:#.]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{3,})</textarea>
+                </label>
+                <div class="hint">Case-insensitive. Open “Text &amp; fields” on a document to tune patterns.</div>
+                <div class="err" id="snc-ruleerr"></div>
+            </fieldset>
+
+            <fieldset>
+                <legend>Matching</legend>
+                <label><input type="checkbox" id="snc-ignorecase" checked> Ignore case</label>
+                <label><input type="checkbox" id="snc-ignoresep" checked> Ignore spaces, dashes, slashes, dots, underscores</label>
+                <div class="hint">With separators ignored, <code>V-123 456</code> and <code>V123456</code> count as the same serial.</div>
+            </fieldset>
+        </div>
+
+        <h2>3. Results</h2>
+        <div data-mode="jobbook">
+            <div class="summary" id="snc-jb-summary"></div>
+            <div class="tablewrap"><table id="snc-jb-table"></table></div>
+            <div class="extra" id="snc-jb-extra"></div>
+        </div>
+        <div data-mode="fields" hidden>
+            <div class="summary" id="snc-summary"></div>
+            <div class="tablewrap"><table id="snc-table"></table></div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="viewer.js"></script>
+    <script src="script.js"></script>
+    <script>
+        // Theme toggle (shared bench convention: localStorage 'theme', dark default)
+        (function () {
+            const toggle = document.getElementById('theme-toggle');
+            const icon = document.getElementById('theme-icon');
+            const text = document.getElementById('theme-text');
+            const SUN = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
+            const MOON = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+            function apply(isLight) {
+                document.body.classList.toggle('light-mode', isLight);
+                icon.innerHTML = isLight ? MOON : SUN;
+                text.textContent = isLight ? 'Dark' : 'Light';
+            }
+            let saved = 'dark';
+            try { saved = localStorage.getItem('theme') || 'dark'; } catch (e) {}
+            apply(saved === 'light');
+            toggle.addEventListener('click', () => {
+                const isLight = !document.body.classList.contains('light-mode');
+                apply(isLight);
+                try { localStorage.setItem('theme', isLight ? 'light' : 'dark'); } catch (e) {}
+            });
+        })();
+    </script>
+
+    <!-- Sidebar Navigation -->
+    <script src="../../assets/sidebar.js"></script>
+</body>
+</html>
