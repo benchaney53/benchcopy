@@ -12,6 +12,98 @@
   //         fields:{name:Set}, text, error }
   const state = { docs: [], refIdx: -1, refAuto: true, mode: 'jobbook', rowsB: [], jb: null, jbRows: [], reviews: new Map(), reviewsFor: '' };
 
+  // Keep the original PDF blobs, as well as their extracted text, in IndexedDB.
+  // localStorage is deliberately not used here: a normal job book can be far too
+  // large for it.  The blob is restored before the viewer is opened, so revisiting
+  // this page does not leave it with page-number placeholders and no PDF to draw.
+  const STORE_DB = 'snc-persisted-documents';
+  const STORE_DOCS = 'documents';
+  const STORE_SESSION = 'session';
+  const SESSION_KEY = 'current';
+  let dbPromise = null;
+
+  function openStore() {
+    if (!('indexedDB' in window)) return Promise.reject(new Error('IndexedDB is not available'));
+    if (!dbPromise) dbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(STORE_DB, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(STORE_DOCS)) db.createObjectStore(STORE_DOCS, { keyPath: 'id' });
+        if (!db.objectStoreNames.contains(STORE_SESSION)) db.createObjectStore(STORE_SESSION);
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('Could not open document storage'));
+    });
+    return dbPromise;
+  }
+
+  function storedDoc(d) {
+    return {
+      id: d.id, name: d.name, blob: d.blob, numPages: d.numPages, pages: d.pages,
+      fieldList: d.fieldList, fields: Object.fromEntries(Object.entries(d.fields).map(([k, v]) => [k, [...v]])),
+      text: d.text, error: d.error,
+    };
+  }
+  function restoredDoc(d) {
+    return { ...d, fields: Object.fromEntries(Object.entries(d.fields || {}).map(([k, v]) => [k, new Set(v)])) };
+  }
+  function transaction(db, store, mode, work) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(store, mode);
+      let result;
+      try { result = work(tx.objectStore(store)); } catch (e) { reject(e); return; }
+      tx.oncomplete = () => resolve(result);
+      tx.onerror = () => reject(tx.error || new Error('Document storage failed'));
+      tx.onabort = () => reject(tx.error || new Error('Document storage was aborted'));
+    });
+  }
+  async function saveDocument(d) {
+    const db = await openStore();
+    await transaction(db, STORE_DOCS, 'readwrite', store => store.put(storedDoc(d)));
+  }
+  async function saveSession() {
+    const db = await openStore();
+    const ref = state.docs[state.refIdx];
+    await transaction(db, STORE_SESSION, 'readwrite', store => store.put({ ids: state.docs.map(d => d.id), refId: ref && ref.id, refAuto: state.refAuto }, SESSION_KEY));
+  }
+  async function removeStoredDocument(id) {
+    const db = await openStore();
+    await transaction(db, STORE_DOCS, 'readwrite', store => store.delete(id));
+  }
+  async function clearStoredDocuments() {
+    const db = await openStore();
+    await transaction(db, STORE_DOCS, 'readwrite', store => store.clear());
+    await transaction(db, STORE_SESSION, 'readwrite', store => store.delete(SESSION_KEY));
+  }
+  async function restoreDocuments() {
+    try {
+      const db = await openStore();
+      const session = await new Promise((resolve, reject) => {
+        const req = db.transaction(STORE_SESSION).objectStore(STORE_SESSION).get(SESSION_KEY);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      if (!session || !session.ids || !session.ids.length) return;
+      const docs = await Promise.all(session.ids.map(id => new Promise((resolve, reject) => {
+        const req = db.transaction(STORE_DOCS).objectStore(STORE_DOCS).get(id);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      })));
+      state.docs = docs.filter(d => d && d.blob).map(restoredDoc);
+      state.refAuto = session.refAuto !== false;
+      state.refIdx = state.docs.findIndex(d => d.id === session.refId);
+      if (state.refIdx < 0) state.refAuto = true;
+      renderDocs();
+      run();
+      if (state.docs.length) showProgress(`Restored ${state.docs.length} saved PDF${state.docs.length === 1 ? '' : 's'}.`);
+    } catch (e) {
+      // Private browsing, quota limits, and disabled browser storage should not
+      // prevent normal one-visit use of the tool.
+      console.warn('Could not restore saved PDFs:', e);
+    }
+  }
+  const newDocumentId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
   // Reviewer marks ("verified" / "issue") per ROMC row, remembered per reference file.
   const reviewKey = e => e.label + '\u0000' + e.n;
   function loadReviews(ref) {
@@ -87,7 +179,7 @@
   }
 
   async function extract(file, displayName) {
-    const doc = { name: displayName || file.name, blob: file, numPages: 0, pages: [], fieldList: [], fields: {}, text: '', error: null };
+    const doc = { id: newDocumentId(), name: displayName || file.name, blob: file, numPages: 0, pages: [], fieldList: [], fields: {}, text: '', error: null };
     let pdf;
     try {
       const data = new Uint8Array(await file.arrayBuffer());
@@ -668,8 +760,11 @@
     for (let k = 0; k < files.length; k++) {
       showProgress(`Reading ${k + 1} of ${files.length}: ${files[k].name}`);
       const blob = await files[k].get();
-      state.docs.push(await extract(blob, files[k].name));
+      const doc = await extract(blob, files[k].name);
+      state.docs.push(doc);
+      try { await saveDocument(doc); } catch (e) { console.warn('Could not save PDF for reload:', e); }
     }
+    try { await saveSession(); } catch (e) { console.warn('Could not save PDF session:', e); }
     showProgress('');
     renderDocs();
     run();
@@ -687,14 +782,17 @@
   $('snc-docs').addEventListener('click', e => {
     const i = e.target.dataset && e.target.dataset.rm;
     if (i === undefined) return;
+    const removed = state.docs[+i];
     state.docs.splice(+i, 1);
     if (+i === state.refIdx) { state.refAuto = true; state.refIdx = -1; } else if (+i < state.refIdx) state.refIdx--;
     renderDocs(); run();
+    removeStoredDocument(removed.id).then(saveSession).catch(e => console.warn('Could not update saved PDFs:', e));
   });
   $('snc-docs').addEventListener('change', e => {
     if (e.target.name !== 'snc-ref') return;
     state.refIdx = +e.target.value; state.refAuto = false;
     run();
+    saveSession().catch(err => console.warn('Could not save reference selection:', err));
   });
   // Build the (possibly large) text view only when opened.
   $('snc-docs').addEventListener('toggle', e => {
@@ -708,7 +806,10 @@
     det.appendChild(ta);
   }, true);
 
-  $('snc-clear').addEventListener('click', () => { viewer.reset(); state.docs = []; state.refIdx = -1; state.refAuto = true; renderDocs(); run(); });
+  $('snc-clear').addEventListener('click', () => {
+    viewer.reset(); state.docs = []; state.refIdx = -1; state.refAuto = true; renderDocs(); run();
+    clearStoredDocuments().catch(e => console.warn('Could not clear saved PDFs:', e));
+  });
 
   // ---------- Viewer ----------
   // Where the evidence for a ROMC row should be: the required document's matching page,
@@ -791,4 +892,5 @@
   });
 
   run();
+  restoreDocuments();
 })();
