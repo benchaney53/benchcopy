@@ -319,7 +319,7 @@
     }
 
     function setMsg(p, n, kept) {
-      if (!st.hl) { msg.textContent = ''; return; }
+      if (!st.hl || (Array.isArray(st.hl) && !st.hl.filter(Boolean).length)) { msg.textContent = ''; return; }
       const label = highlightLabel();
       if (kept) msg.innerHTML = `Stayed on p.${n} — <code>${esc(label)}</code> isn't in this document's text, so its location is a guess`;
       else if (p && p.rects && p.rects.length) msg.innerHTML = `Highlighted <code>${esc(label)}</code> on p.${n}`;
@@ -421,7 +421,78 @@
     body.addEventListener('pointercancel', stopDrag);
     body.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
 
+    // ---- Area capture: drag a rectangle on a page to get a picture of it ----
+    let captureCb = null, capSel = null;
+    const clampTo = (value, max) => Math.max(0, Math.min(value, max));
+    function startCapture(cb) { captureCb = cb; body.classList.add('capturing'); }
+    function stopCapture() {
+      captureCb = null; body.classList.remove('capturing');
+      if (capSel) { capSel.el.remove(); capSel = null; }
+    }
+    function drawSel() {
+      Object.assign(capSel.el.style, {
+        left: Math.min(capSel.x0, capSel.x1) + 'px', top: Math.min(capSel.y0, capSel.y1) + 'px',
+        width: Math.abs(capSel.x1 - capSel.x0) + 'px', height: Math.abs(capSel.y1 - capSel.y0) + 'px',
+      });
+    }
+    body.addEventListener('pointerdown', e => {
+      if (!captureCb || e.button !== 0 || !st.pdf) return;
+      const box = e.target.closest && e.target.closest('.pane-page-box');
+      if (!box) return;
+      e.preventDefault();
+      const r = box.getBoundingClientRect();
+      const el = document.createElement('div');
+      el.className = 'pane-capture-capSel';
+      box.appendChild(el);
+      capSel = { box, el, x0: clampTo(e.clientX - r.left, r.width), y0: clampTo(e.clientY - r.top, r.height) };
+      capSel.x1 = capSel.x0; capSel.y1 = capSel.y0;
+      drawSel();
+      try { body.setPointerCapture(e.pointerId); } catch (err) { /* synthetic or already-ended pointer */ }
+    });
+    body.addEventListener('pointermove', e => {
+      if (!capSel) return;
+      const r = capSel.box.getBoundingClientRect();
+      capSel.x1 = clampTo(e.clientX - r.left, r.width); capSel.y1 = clampTo(e.clientY - r.top, r.height);
+      drawSel();
+    });
+    function finishSel(e, cancelled) {
+      if (!capSel) return;
+      const { box, el } = capSel, cb = captureCb;
+      if (!cancelled && Number.isFinite(e.clientX)) {
+        // Use the release position too, so a quick drag without move events still counts.
+        const br = box.getBoundingClientRect();
+        capSel.x1 = clampTo(e.clientX - br.left, br.width); capSel.y1 = clampTo(e.clientY - br.top, br.height);
+      }
+      const x = Math.min(capSel.x0, capSel.x1), y = Math.min(capSel.y0, capSel.y1), w = Math.abs(capSel.x1 - capSel.x0), h = Math.abs(capSel.y1 - capSel.y0);
+      const page = +box.dataset.page, p = st.pages[page - 1];
+      el.remove(); capSel = null;
+      try { if (body.hasPointerCapture(e.pointerId)) body.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      if (cancelled || w < 8 || h < 8 || !p || !p.canvas) return; // too small: stay in capture mode
+      // Map the selection (relative to the page box) onto the rendered canvas through the canvas's
+      // actual on-screen size, so zoom level, scroll position and a canvas that is mid-re-render all crop correctly.
+      const br = box.getBoundingClientRect(), cr = p.canvas.getBoundingClientRect();
+      const sx = p.canvas.width / cr.width, sy = p.canvas.height / cr.height;
+      const left = Math.max(0, x - (cr.left - br.left)), top = Math.max(0, y - (cr.top - br.top));
+      const right = Math.min(cr.width, x + w - (cr.left - br.left)), bottom = Math.min(cr.height, y + h - (cr.top - br.top));
+      if (right - left < 4 || bottom - top < 4) return;
+      const cw = Math.max(1, Math.round((right - left) * sx)), ch = Math.max(1, Math.round((bottom - top) * sy)), shrink = Math.min(1, 1100 / cw);
+      const out = document.createElement('canvas');
+      out.width = Math.max(1, Math.round(cw * shrink)); out.height = Math.max(1, Math.round(ch * shrink));
+      const ctx = out.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, out.width, out.height);
+      ctx.drawImage(p.canvas, left * sx, top * sy, cw, ch, 0, 0, out.width, out.height);
+      const d = getDocs()[st.doc];
+      stopCapture();
+      if (cb) cb({ data: out.toDataURL('image/jpeg', 0.82), w: out.width, h: out.height, doc: d ? d.name : '', page });
+    }
+    body.addEventListener('pointerup', e => finishSel(e, false));
+    body.addEventListener('pointercancel', e => finishSel(e, true));
+
     return {
+      startCapture, stopCapture,
+      zoomIn() { if (st.pdf) zoomTo(st.zoom * 1.25); },
+      zoomOut() { if (st.pdf) zoomTo(st.zoom / 1.25); },
+      zoomReset() { if (st.pdf) zoomTo(1); },
       // spec: { doc, page, hl, rect?, sure }. sure === false means "page is only a guess":
       // if this document is already open, stay where the reviewer is.
       async show(spec) {
@@ -459,9 +530,7 @@
     root.setAttribute('aria-modal', 'true');
     root.innerHTML =
       '<div class="viewer-box">' +
-      '<div class="viewer-bar">' +
-      '<div class="viewer-title"></div>' +
-      '<div class="viewer-targets" aria-label="Required review targets"></div>' +
+      '<aside class="viewer-rail" aria-label="Review tools">' +
       '<div class="viewer-actions">' +
       '<span class="viewer-step"><button type="button" class="btn btn-small" data-v="prev">&#8249; Previous <kbd>P</kbd> <kbd>&uarr;</kbd></button>' +
       '<span class="viewer-count"></span>' +
@@ -470,25 +539,53 @@
       '<button type="button" class="btn btn-small mark-bad" data-v="issue">&#9888; Issue <kbd>I</kbd></button>' +
       '<button type="button" class="btn btn-small" data-v="clear">Clear <kbd>U</kbd></button></span>' +
       '<button type="button" class="btn btn-small" data-v="unresolved">Next open <kbd>Space</kbd></button>' +
-      '<button type="button" class="btn btn-small" data-v="close" title="Close (Esc)">Close <kbd>Esc</kbd></button>' +
-      '</div></div>' +
+      '</div>' +
+      '<div class="viewer-docs-wrap" hidden><div class="viewer-docs-title">Documents</div><div class="viewer-docs"></div></div>' +
+      '</aside>' +
+      '<div class="viewer-main">' +
+      '<div class="viewer-bar">' +
+      '<button type="button" class="viewer-close" data-v="close" title="Close (Esc)" aria-label="Close">&times;</button>' +
+      '<div class="viewer-title"></div>' +
+      '<div class="viewer-targets" aria-label="Required review targets"></div>' +
+      '</div>' +
       '<div class="viewer-tip" hidden></div>' +
-      '<form class="viewer-note" hidden><label><strong>Issue note <span class="src">(optional &middot; one per item)</span></strong><textarea placeholder="Describe what is wrong or what needs follow-up…" aria-label="Issue note"></textarea></label><label><strong>Attach to document</strong><select aria-label="Attach issue note to document"></select></label><span class="note-error">Saved automatically</span></form>' +
+      '<form class="viewer-note" hidden><label><strong>Issue note <span class="src">(optional &middot; one per item)</span></strong><textarea placeholder="Describe what is wrong or what needs follow-up…" aria-label="Issue note"></textarea></label><label><strong>Attach to document</strong><select aria-label="Attach issue note to document"></select></label><button type="button" class="btn btn-small" data-v="capture" title="Click, then drag over a PDF to attach a picture of that area to this note">&#9986; Attach area</button><span class="note-error">Saved automatically</span><div class="note-images"></div></form>' +
       '<div class="viewer-panes"><div class="pane"></div><div class="pane"></div><div class="pane"></div><div class="pane"></div></div>' +
-      '</div>';
+      '</div></div>';
     document.body.appendChild(root);
     const paneEls = [...root.querySelectorAll('.pane')];
     const panes = paneEls.map(el => Pane(el, getDocs));
     // Every pane after the first shows one required review target; a small label says which.
     paneEls.slice(1).forEach(el => el.insertAdjacentHTML('afterbegin', '<div class="pane-target-label" hidden></div>'));
     const paneA = panes[0];
+    // + / - / 0 zoom the pane under the mouse (or every open pane) from anywhere in the viewer.
+    let hoverPane = -1;
+    paneEls.forEach((el, i) => el.addEventListener('pointerenter', () => { hoverPane = i; }));
+    root.addEventListener('pointerleave', () => { hoverPane = -1; });
+    function zoomKey(action) {
+      const targets = hoverPane >= 0 && !paneEls[hoverPane].hidden ? [panes[hoverPane]] : panes.filter((p, i) => !paneEls[i].hidden);
+      targets.forEach(p => p[action]());
+    }
     const targetPanes = panes.slice(1), targetEls = paneEls.slice(1);
     const title = root.querySelector('.viewer-title'), tip = root.querySelector('.viewer-tip');
     const markBox = root.querySelector('.viewer-mark'), stepBox = root.querySelector('.viewer-step'), targetBox = root.querySelector('.viewer-targets');
     const noteBox = root.querySelector('.viewer-note'), noteInput = noteBox.querySelector('textarea'), noteDoc = noteBox.querySelector('select'), noteError = noteBox.querySelector('.note-error');
     let current = null;
     let lastFocus = null;
+    const noteImages = noteBox.querySelector('.note-images'), captureBtn = noteBox.querySelector('[data-v="capture"]');
+    let capturing = false;
 
+    // Documents panel: every document in the review with its progress; click to jump to its first open item.
+    const docsWrap = root.querySelector('.viewer-docs-wrap'), docsBox = root.querySelector('.viewer-docs');
+    function renderDocNav() {
+      const items = current && current.docNav ? current.docNav() : null;
+      docsWrap.hidden = !items || !items.length;
+      if (docsWrap.hidden) { docsBox.innerHTML = ''; return; }
+      docsBox.innerHTML = items.map((d, i) =>
+        `<button type="button" class="doc-nav${d.active ? ' active' : ''}${d.done >= d.total ? ' complete' : ''}" data-v="doc" data-i="${i}" title="${esc(d.name)}"><span class="doc-nav-name">${esc(d.label)}</span><span class="doc-nav-count">${d.done}/${d.total}</span></button>`).join('');
+      const active = docsBox.querySelector('.doc-nav.active');
+      if (active) active.scrollIntoView({ block: 'nearest' });
+    }
     function setMarkButtons(status) {
       markBox.querySelector('.mark-ok').classList.toggle('active', status === 'verified');
       markBox.querySelector('.mark-bad').classList.toggle('active', status === 'issue');
@@ -509,7 +606,29 @@
       if (onClose) onClose();
       if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
     }
-    function hideNote() { flushNote(); noteBox.hidden = true; }
+    function hideNote() { flushNote(); cancelCapture(); noteBox.hidden = true; }
+    function renderNoteImages() {
+      const images = (current && current.mark && current.mark.images) || [];
+      noteImages.hidden = !images.length;
+      noteImages.innerHTML = images.map((img, i) =>
+        `<span class="note-img"><img src="${img.data}" alt="Attached area"><small>${esc(img.doc || '')} p.${img.page}</small><button type="button" data-v="rm-image" data-i="${i}" aria-label="Remove picture" title="Remove picture">&times;</button></span>`).join('');
+    }
+    function cancelCapture() {
+      panes.forEach(p => p.stopCapture());
+      capturing = false;
+      if (captureBtn) captureBtn.innerHTML = '&#9986; Attach area';
+    }
+    function startCaptureMode() {
+      capturing = true;
+      captureBtn.textContent = 'Drag over a PDF… (Esc cancels)';
+      const done = img => {
+        panes.forEach(p => p.stopCapture());
+        capturing = false; captureBtn.innerHTML = '&#9986; Attach area';
+        current.mark.images = (current.mark.images || []).concat(img);
+        renderNoteImages(); commitNote();
+      };
+      panes.forEach(p => p.startCapture(done));
+    }
     function showIssueNote(focus) {
       if (!current || !current.mark) return;
       noteInput.value = current.mark.note || '';
@@ -520,6 +639,7 @@
       noteDoc.innerHTML = docs.map(doc => `<option value="${esc(String(doc.id))}">${esc(doc.name)}</option>`).join('');
       noteDoc.hidden = !docs.length;
       if (docs.some(doc => String(doc.id) === String(selected))) noteDoc.value = String(selected);
+      renderNoteImages();
       noteBox.hidden = false;
       if (focus) noteInput.focus();
     }
@@ -532,7 +652,8 @@
       const doc = (current.documents || []).find(item => String(item.id) === noteDoc.value);
       const attachment = doc ? { id: doc.id, name: doc.name } : null;
       current.mark.note = note; current.mark.noteDocument = attachment;
-      onMark(current.mark.key, 'issue', note, attachment);
+      onMark(current.mark.key, 'issue', note, attachment, false, current.mark.images || []);
+      renderDocNav();
       noteError.textContent = 'Saved automatically';
     }
     function flushNote() { if (noteTimer) commitNote(); }
@@ -544,6 +665,9 @@
       if (!b) return;
       const v = b.dataset.v;
       if (v === 'close') close();
+      else if (v === 'doc' && current && current.docNav) { const items = current.docNav(); if (items[+b.dataset.i]) items[+b.dataset.i].onSelect(); }
+      else if (v === 'capture') { if (capturing) cancelCapture(); else startCaptureMode(); }
+      else if (v === 'rm-image' && current && current.mark) { current.mark.images.splice(+b.dataset.i, 1); renderNoteImages(); commitNote(); }
       else if ((v === 'prev' || v === 'next') && current && current.step) onStep(current.step.index + (v === 'next' ? 1 : -1));
       else if (v === 'target' && current && current.onTarget) current.onTarget(+b.dataset.target);
       else if (v === 'unresolved' && current && current.onNextUnresolved) current.onNextUnresolved();
@@ -551,8 +675,8 @@
         hideNote();
         current.mark.status = null;
         if (current.targets) current.targets[current.targetIndex].status = null;
-        current.mark.note = ''; current.mark.noteDocument = null;
-        setMarkButtons(null); renderTargets(); onMark(current.mark.key, null);
+        current.mark.note = ''; current.mark.noteDocument = null; current.mark.images = [];
+        setMarkButtons(null); renderTargets(); onMark(current.mark.key, null); renderDocNav();
       }
       else if ((v === 'verified' || v === 'issue') && current && current.mark) {
         if (v === 'issue') {
@@ -566,7 +690,7 @@
           hideNote();
           current.mark.status = null;
           if (current.targets) current.targets[current.targetIndex].status = null;
-          setMarkButtons(null); renderTargets(); onMark(current.mark.key, null, null, null, true);
+          setMarkButtons(null); renderTargets(); onMark(current.mark.key, null, null, null, true); renderDocNav();
           return;
         }
         const next = current.mark.status === v ? null : v;
@@ -575,6 +699,7 @@
         setMarkButtons(next);
         renderTargets();
         onMark(current.mark.key, next);
+        renderDocNav();
         if (next === 'verified' && current.onNextUnresolved) current.onNextUnresolved();
       }
     });
@@ -583,12 +708,18 @@
     noteDoc.addEventListener('change', commitNote);
     document.addEventListener('keydown', e => {
       if (root.hidden) return;
+      if (capturing && e.key === 'Escape') { e.preventDefault(); cancelCapture(); return; }
       if (e.target.matches('textarea')) {
         if (e.key === 'Escape') { e.preventDefault(); flushNote(); e.target.blur(); }
         return;
       }
       if (e.target.matches('input, select, [contenteditable="true"]')) return;
       const key = e.key.toLowerCase();
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest('.pane-body')) {
+        if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomKey('zoomIn'); return; }
+        if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomKey('zoomOut'); return; }
+        if (e.key === '0') { e.preventDefault(); zoomKey('zoomReset'); return; }
+      }
       if (key === 'escape') { e.preventDefault(); close(); }
       else if ((key === 'arrowleft' || key === 'arrowup' || key === 'p') && current && current.step && current.step.index > 0) { e.preventDefault(); onStep(current.step.index - 1); }
       else if ((key === 'arrowright' || key === 'arrowdown' || key === 'n') && current && current.step && current.step.index < current.step.total - 1) { e.preventDefault(); onStep(current.step.index + 1); }
@@ -619,9 +750,10 @@
         tip.textContent = spec.tip || '';
         tip.hidden = !spec.tip;
         renderTargets();
+        renderDocNav();
         markBox.hidden = !spec.mark;
         stepBox.hidden = !spec.step;
-        if (spec.mark) { spec.mark.note = spec.mark.note || ''; spec.mark.noteDocument = spec.mark.noteDocument || null; setMarkButtons(spec.mark.status); if (spec.mark.status === 'issue') showIssueNote(false); }
+        if (spec.mark) { spec.mark.note = spec.mark.note || ''; spec.mark.noteDocument = spec.mark.noteDocument || null; spec.mark.images = spec.mark.images || []; setMarkButtons(spec.mark.status); if (spec.mark.status === 'issue') showIssueNote(false); }
         if (spec.step) root.querySelector('.viewer-count').textContent = `${spec.step.index + 1} of ${spec.step.total}`;
         if (spec.step) {
           stepBox.querySelector('[data-v="prev"]').disabled = spec.step.index <= 0;

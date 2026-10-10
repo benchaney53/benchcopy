@@ -589,8 +589,8 @@
     return ((sourceOrder[a.sourceKind] ?? 9) - (sourceOrder[b.sourceKind] ?? 9)) || ((a.sourceIdx || 0) - (b.sourceIdx || 0)) || reviewLocationOrder(a, b) || a.targetLabel.localeCompare(b.targetLabel);
   }
   function noteDetails(note) {
-    if (!note) return { text: '', document: null };
-    return typeof note === 'string' ? { text: note, document: null } : { text: note.text || '', document: note.document || null };
+    if (!note) return { text: '', document: null, images: [] };
+    return typeof note === 'string' ? { text: note, document: null, images: [] } : { text: note.text || '', document: note.document || null, images: Array.isArray(note.images) ? note.images : [] };
   }
   function noteLabel(note) {
     const details = noteDetails(note);
@@ -624,11 +624,11 @@
   }
   function viewerDocuments() { return state.docs.map((doc, index) => ({ id: doc.id, name: doc.name, index })); }
   function compareJobBook() {
-    const sources = state.docs.map((d, i) => ({ d, i, kind: sourceKind(d) || 'document' })).filter(x => !x.d.error);
+    const sources = state.docs.map((d, i) => ({ d, i, kind: ['romc', 'sif'].includes(sourceKind(d)) ? sourceKind(d) : 'document' })).filter(x => !x.d.error);
     if (!sources.length) { state.jb = null; return; }
     const entries = [];
     for (const { d, i, kind } of sources) {
-      for (const f of d.fieldList) {
+      for (const f of (kind === 'document' ? [] : d.fieldList)) {
         const value = String(f.value || '').trim();
         if (!value || isNA(value) || shouldSkipField(f, value)) continue;
         // A comma belongs to this one form field; it never creates another review.
@@ -656,7 +656,7 @@
         }
       }
       // Blank fields and unticked boxes are flagged for review unless the Skip toggle is on.
-      if (!state.skip.blanks) for (const f of d.blankFields || []) {
+      if (kind !== 'document' && !state.skip.blanks) for (const f of d.blankFields || []) {
         if (shouldSkipField(f, '')) continue;
         const target = f.checkbox ? manualTarget('unticked-box', 'Unticked box: confirm it should be unticked') : manualTarget('blank-field', 'Blank field: confirm it may be empty');
         entries.push({ sourceId: d.id || d.name, sourceIdx: i, sourceKind: kind, name: f.name, label: f.label, value: f.checkbox ? '(unticked)' : '(blank)', n: '', page: f.page, rect: f.rect, section: f.section, targetKey: target.key, targetLabel: target.label, expected: [], found: [], scanPages: [], status: 'manual' });
@@ -741,7 +741,7 @@
       return { total, complete };
     };
     const allProgress = progress('all'), romcProgress = progress('romc'), sifProgress = progress('sif'), otherProgress = progress('other');
-    launcher.innerHTML = `<section class="review-launcher" aria-label="Start Job Book Review"><div class="review-launcher-copy"><strong>Start Job Book Review</strong><span>Review every required field one at a time, with its source and matching job-book record side by side.</span></div><label class="review-scope-label">Review<select id="snc-review-scope" aria-label="Review scope"><option value="all"${state.reviewScope === 'all' ? ' selected' : ''}>All job book fields</option><option value="romc"${state.reviewScope === 'romc' ? ' selected' : ''}>ROMC fields only</option><option value="sif"${state.reviewScope === 'sif' ? ' selected' : ''}>SIF fields only</option><option value="other"${state.reviewScope === 'other' ? ' selected' : ''}>Other documents (forms and page review)</option></select></label><button type="button" class="btn btn-review-start" data-start-review${allProgress.total ? '' : ' disabled'}>Start / resume review</button><div class="review-skip" role="group" aria-label="Fields to skip"><span>Skip:</span>${[['dates', 'Dates'], ['initials', 'Initials'], ['names', 'Names'], ['company', 'Company'], ['version', 'Version numbers'], ['yesno', 'Yes / No answers'], ['blanks', 'Blank / unticked fields']].map(([k, t]) => `<label><input type="checkbox" data-skip="${k}"${state.skip[k] ? ' checked' : ''}> ${t}</label>`).join('')}</div><div class="review-launcher-progress">All <strong>${allProgress.complete}/${allProgress.total}</strong> &middot; ROMC <strong>${romcProgress.complete}/${romcProgress.total}</strong> &middot; SIF <strong>${sifProgress.complete}/${sifProgress.total}</strong>${otherProgress.total ? ` &middot; Other documents <strong>${otherProgress.complete}/${otherProgress.total}</strong>` : ''}</div></section>`;
+    launcher.innerHTML = `<section class="review-launcher" aria-label="Start Job Book Review"><div class="review-launcher-copy"><strong>Start Job Book Review</strong><span>Review every required field one at a time, with its source and matching job-book record side by side.</span></div><label class="review-scope-label">Review<select id="snc-review-scope" aria-label="Review scope"><option value="all"${state.reviewScope === 'all' ? ' selected' : ''}>All job book fields</option><option value="romc"${state.reviewScope === 'romc' ? ' selected' : ''}>ROMC fields only</option><option value="sif"${state.reviewScope === 'sif' ? ' selected' : ''}>SIF fields only</option><option value="other"${state.reviewScope === 'other' ? ' selected' : ''}>Other documents (page review)</option></select></label><button type="button" class="btn btn-review-start" data-start-review${allProgress.total ? '' : ' disabled'}>Start / resume review</button><div class="review-skip" role="group" aria-label="Fields to skip"><span>Skip:</span>${[['dates', 'Dates'], ['initials', 'Initials'], ['names', 'Names'], ['company', 'Company'], ['version', 'Version numbers'], ['yesno', 'Yes / No answers'], ['blanks', 'Blank / unticked fields']].map(([k, t]) => `<label><input type="checkbox" data-skip="${k}"${state.skip[k] ? ' checked' : ''}> ${t}</label>`).join('')}</div><div class="review-launcher-progress">All <strong>${allProgress.complete}/${allProgress.total}</strong> &middot; ROMC <strong>${romcProgress.complete}/${romcProgress.total}</strong> &middot; SIF <strong>${sifProgress.complete}/${sifProgress.total}</strong>${otherProgress.total ? ` &middot; Other documents <strong>${otherProgress.complete}/${otherProgress.total}</strong>` : ''}</div></section>`;
     if (nVer || nIss) sum.innerHTML += `<p class="src">Your review: ${nVer} verified · ${nIss} marked as issue</p>`;
     if (unresolvedLegacy) sum.innerHTML += `<p class="src">${unresolvedLegacy} earlier review mark${unresolvedLegacy === 1 ? '' : 's'} kept for reference because this field now has multiple separate targets.</p>`;
 
@@ -877,7 +877,6 @@
     autoPickReference();
     compareJobBook();
     renderJobBook();
-    $('snc-csv').disabled = !(state.jb && state.jb.entries.length);
     $('snc-issues-csv').disabled = !state.jb || !state.jb.entries.some(e => state.reviews.get(reviewKey(e)) === 'issue');
     $('snc-issues-pdf').disabled = $('snc-issues-csv').disabled;
     $('snc-snapshot').disabled = !state.docs.some(d => !d.error);
@@ -1078,6 +1077,22 @@
     // Everything is verified; keep the current field open rather than closing the review.
     openReviewGroup(groupIndex, targetIndex, scope);
   }
+  // Per-document progress for the viewer's Documents panel (queue order).
+  function documentNav(scope, activeIdx) {
+    const groups = reviewGroups(scope), byDoc = new Map();
+    groups.forEach((group, gi) => {
+      const idx = group.entry.sourceIdx;
+      if (!byDoc.has(idx)) byDoc.set(idx, { idx, total: 0, done: 0, first: gi, open: -1 });
+      const rec = byDoc.get(idx);
+      group.targets.forEach(t => { rec.total++; if (state.reviews.get(reviewKey(t)) === 'verified') rec.done++; });
+      if (rec.open < 0 && group.targets.some(t => state.reviews.get(reviewKey(t)) !== 'verified')) rec.open = gi;
+    });
+    return [...byDoc.values()].map(rec => {
+      const d = state.docs[rec.idx], gi = rec.open >= 0 ? rec.open : rec.first;
+      return { label: (d && (d.short || d.name)) || 'Document', name: d ? d.name : '', total: rec.total, done: rec.done, active: rec.idx === activeIdx,
+        onSelect: () => openReviewGroup(gi, firstOpenTarget(groups[gi]), scope) };
+    });
+  }
   function openReviewGroup(groupIndex, targetIndex, scope = state.reviewScope) {
     const groups = reviewGroups(scope);
     const group = groups[groupIndex];
@@ -1096,8 +1111,9 @@
       targetIndex,
       documents: viewerDocuments(),
       tip: reviewTip(entry),
-      mark: { key: reviewKey(entry), status: state.reviews.get(reviewKey(entry)) || null, note: noteDetails(state.reviewNotes.get(reviewKey(entry))).text, noteDocument: noteDetails(state.reviewNotes.get(reviewKey(entry))).document },
+      mark: { key: reviewKey(entry), status: state.reviews.get(reviewKey(entry)) || null, note: noteDetails(state.reviewNotes.get(reviewKey(entry))).text, noteDocument: noteDetails(state.reviewNotes.get(reviewKey(entry))).document, images: noteDetails(state.reviewNotes.get(reviewKey(entry))).images },
       step: { index: groupIndex, total: groups.length },
+      docNav: () => documentNav(scope, group.entry.sourceIdx),
       onTarget: index => openReviewGroup(groupIndex, index, scope),
       onNextUnresolved: () => nextUnresolvedReview(groupIndex, targetIndex, scope),
     });
@@ -1113,15 +1129,15 @@
       left: { doc: e.sourceIdx, page: e.page, hl: [e.label, e.value], rect: e.rect, sure: true }, right: reviewTarget(e),
       documents: viewerDocuments(),
       tip: reviewTip(e),
-      mark: { key: reviewKey(e), status: state.reviews.get(reviewKey(e)) || null, note: noteDetails(state.reviewNotes.get(reviewKey(e))).text, noteDocument: noteDetails(state.reviewNotes.get(reviewKey(e))).document },
+      mark: { key: reviewKey(e), status: state.reviews.get(reviewKey(e)) || null, note: noteDetails(state.reviewNotes.get(reviewKey(e))).text, noteDocument: noteDetails(state.reviewNotes.get(reviewKey(e))).document, images: noteDetails(state.reviewNotes.get(reviewKey(e))).images },
     });
   }
   const viewer = window.createSncViewer({
     getDocs: () => state.docs,
-    onMark: (key, status, note, noteDocument, preserveNote) => {
+    onMark: (key, status, note, noteDocument, preserveNote, images) => {
       if (status) state.reviews.set(key, status); else state.reviews.delete(key);
       if (status === 'issue') {
-        if (note || noteDocument) state.reviewNotes.set(key, { text: note || '', document: noteDocument || null }); else state.reviewNotes.delete(key);
+        if (note || noteDocument || (images && images.length)) state.reviewNotes.set(key, { text: note || '', document: noteDocument || null, images: images || [] }); else state.reviewNotes.delete(key);
       } else if (!preserveNote) state.reviewNotes.delete(key);
       saveReviews();
       saveSession().catch(e => console.warn('Could not save review progress:', e));
@@ -1347,33 +1363,6 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
 
-  $('snc-csv').addEventListener('click', () => {
-    const q = s => `"${String(s).replace(/"/g, '""')}"`;
-    const lines = [];
-    if (state.mode === 'jobbook' && state.jb) {
-      lines.push(['Status', 'Source', 'Field', 'Value', 'Source page', 'Review target', 'Found in', 'Notes', 'Review', 'Issue note', 'Issue note document'].map(q).join(','));
-      for (const e of state.jb.entries) {
-        const issue = state.reviews.get(reviewKey(e)) === 'issue' ? noteDetails(state.reviewNotes.get(reviewKey(e))) : { text: '', document: null };
-        lines.push([JB[e.status].t, kindLabel(e.sourceKind), e.label, e.value, e.page, e.targetLabel,
-          e.found.map(f => `${state.docs[f.i].short} p.${f.pages.join('/')}`).join('; '),
-          jbDetail(e).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&'), state.reviews.get(reviewKey(e)) || '', issue.text, issue.document?.name || ''].map(q).join(','));
-      }
-      if (state.jb.extra.length) {
-        lines.push('', ['Not in ROMC', 'Document', 'Value', 'Page', 'Context'].map(q).join(','));
-        for (const s of state.jb.extra) lines.push(['', state.docs[s.doc].short, s.value, s.page, s.context].map(q).join(','));
-      }
-    } else {
-      const docs = state.cmpDocs || [];
-      lines.push(['Status', 'Source', 'Item', ...docs.map(d => d.short)].map(q).join(','));
-      for (const r of state.rowsB) lines.push([LABEL_B[r.status], r.src, r.label, ...r.cells.map(c => c.join('; '))].map(q).join(','));
-    }
-    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `serial-crosscheck-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  });
   $('snc-issues-csv').addEventListener('click', () => {
     if (!state.jb) return;
     const xml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -1431,6 +1420,22 @@
       field('Found in', entry.found.map(f => `${state.docs[f.i].short} — page ${f.pages.join(', ')}`).join('; '));
       field('Attached document', issue.document?.name || '—');
       field('Issue note', issue.text || 'No note entered');
+      // Screenshots attached to the note, two per row, directly under it.
+      const shots = issue.images || [];
+      for (let k = 0; k < shots.length; k += 2) {
+        const pair = shots.slice(k, k + 2), maxW = (right - left - 36) / 2, maxH = 210;
+        const sized = pair.map(img => { const r = Math.min(maxW / img.w, maxH / img.h, 1); return { img, w: img.w * r, h: img.h * r }; });
+        const rowH = Math.max(...sized.map(x => x.h)) + 22;
+        pageBreak(rowH);
+        sized.forEach((x, col) => {
+          const ix = left + 12 + col * (maxW + 12);
+          try { pdf.addImage(x.img.data, 'JPEG', ix, y + 2, x.w, x.h); } catch (err) { console.warn('Could not add screenshot to the report:', err); }
+          pdf.setDrawColor(200, 205, 212); pdf.setLineWidth(0.5); pdf.rect(ix, y + 2, x.w, x.h);
+          pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(89, 103, 120);
+          pdf.text(pdf.splitTextToSize(`${x.img.doc || 'Document'} — page ${x.img.page}`, maxW)[0], ix, y + x.h + 12);
+        });
+        y += rowH;
+      }
       y += 14;
     });
     const total = pdf.getNumberOfPages();

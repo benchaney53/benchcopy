@@ -189,8 +189,27 @@
         /* Document viewer overlay */
         body.snc-viewer-open { overflow: hidden; }
         .snc-viewer { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,0.6); display: flex; padding: 12px; }
-        .viewer-box { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--panel); border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); overflow: hidden; }
-        .viewer-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+        .viewer-box { flex: 1; display: flex; flex-direction: row; min-width: 0; background: var(--panel); border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); overflow: hidden; }
+        .viewer-rail { flex: 0 0 210px; width: 210px; display: flex; flex-direction: column; gap: 10px; padding: 10px; background: var(--inset); border-right: 1px solid var(--line); overflow-y: auto; }
+        .viewer-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+        .viewer-rail .btn { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 0; }
+        .viewer-rail .viewer-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+        .viewer-rail .viewer-step { display: grid; grid-template-columns: 1fr; gap: 6px; }
+        .viewer-rail .viewer-mark { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+        .viewer-rail .viewer-count { min-width: 0; text-align: center; order: -1; }
+        .viewer-rail > .viewer-actions > [data-v="unresolved"] { margin-top: 2px; }
+        .viewer-docs-wrap { display: flex; flex-direction: column; gap: 6px; min-height: 0; padding-top: 8px; border-top: 1px solid var(--line); }
+        .viewer-docs-title { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+        .viewer-docs { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+        .doc-nav { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); font-size: 12px; text-align: left; cursor: pointer; }
+        .doc-nav:hover { border-color: var(--accent); }
+        .doc-nav.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+        .doc-nav.complete .doc-nav-count { color: var(--ok); }
+        .doc-nav-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .doc-nav-count { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+        .viewer-close { position: absolute; top: 8px; right: 10px; z-index: 5; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--fg); font-size: 24px; line-height: 1; cursor: pointer; }
+        .viewer-close:hover, .viewer-close:focus-visible { border-color: #b02a37; color: #fff; background: #b02a37; outline: none; }
+        .viewer-bar { position: relative; padding-right: 56px !important; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
         .viewer-title { flex: 1 1 320px; min-width: 0; color: var(--heading); }
         .viewer-targets { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 6px; }
         .viewer-tip { padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--inset); color: var(--fg); font-size: 13px; }
@@ -208,6 +227,13 @@
         .viewer-note label strong { color: var(--heading); }
         .viewer-note textarea { min-height: 56px; font-family: inherit; font-size: 13px; }
         .viewer-note .note-error { color: var(--bad); font-size: 12px; }
+        .note-images { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 8px; }
+        .note-img { position: relative; display: inline-flex; flex-direction: column; gap: 2px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); max-width: 170px; }
+        .note-img img { display: block; max-width: 160px; max-height: 90px; object-fit: contain; background: #fff; }
+        .note-img small { color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .note-img button { position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; line-height: 1; }
+        .pane-body.capturing { cursor: crosshair; user-select: none; }
+        .pane-capture-sel { position: absolute; z-index: 3; border: 2px dashed #ff9800; background: rgba(255, 152, 0, 0.18); pointer-events: none; }
         .viewer-step, .viewer-mark { display: inline-flex; gap: 6px; align-items: center; }
         .viewer-count { color: var(--muted); font-size: 12px; min-width: 56px; text-align: center; }
         .viewer-mark .btn.active.mark-ok { background-color: #2e7d32; }
@@ -244,7 +270,8 @@
         .pane-hl .hl { position: absolute; background: rgba(255, 213, 0, 0.35); outline: 2px solid #ff9800; border-radius: 2px; }
         @media (max-width: 800px) {
             .snc-viewer { padding: 0; }
-            .viewer-box { border-radius: 0; }
+            .viewer-box { border-radius: 0; flex-direction: column; }
+            .viewer-rail { flex: none; width: auto; max-height: 38vh; border-right: none; border-bottom: 1px solid var(--line); }
             .snc-viewer.split .viewer-panes { flex-direction: column; }
             .viewer-panes .pane { border-right: none; border-bottom: 1px solid var(--line); }
         }
@@ -273,11 +300,8 @@
         <ul class="docs" id="snc-docs"></ul>
         <div class="button-group">
             <button class="btn" id="snc-clear">Clear documents</button>
-            <button class="btn btn-success" id="snc-csv" disabled>
-                <img src="../../assets/icons/download.svg" alt="" style="width:16px;height:16px;vertical-align:middle;margin-right:5px;"> Export CSV
-            </button>
             <button class="btn btn-success" id="snc-snapshot" disabled title="Every ROMC / SIF field with its answer, N/A or blank state and review result, to compare with the next job book">
-                <img src="../../assets/icons/download.svg" alt="" style="width:16px;height:16px;vertical-align:middle;margin-right:5px;"> Export answers CSV
+                <img src="../../assets/icons/download.svg" alt="" style="width:16px;height:16px;vertical-align:middle;margin-right:5px;"> Export CSV
             </button>
             <button class="btn btn-warning" id="snc-issues-csv" disabled>
                 <img src="../../assets/icons/download.svg" alt="" style="width:16px;height:16px;vertical-align:middle;margin-right:5px;"> Export issues to Excel
@@ -331,13 +355,13 @@ Hub serial | hub[^\n]{0,40}?(?:serial\s*(?:no\.?|number|#)|s\/n)\s*[:#.]?\s*((?=
             </details>
         </div>
     </div>
-    <div class="version-tag">Job Book Review v1.3.38</div>
+    <div class="version-tag">Job Book Review v1.3.46</div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="viewer.js?v=1.3.38"></script>
-    <script src="script.js?v=1.3.38"></script>
+    <script src="viewer.js?v=1.3.46"></script>
+    <script src="script.js?v=1.3.46"></script>
     <script>
         // Theme toggle (shared bench convention: localStorage 'theme', dark default)
         (function () {

@@ -1,6 +1,6 @@
 JOB BOOK REVIEW (folder: pdf-serial-crosscheck) — CONTINUATION NOTES
 Last updated: 2026-10-10
-Current local build: v1.3.38
+Current local build: v1.3.46
 
 READ THIS FIRST
 - This is a browser-only Job Book Review tool. PDFs and review progress stay on the user's device; PDFs are never uploaded.
@@ -11,7 +11,7 @@ READ THIS FIRST
 - IMPORTANT: Whenever you change this tool, update this file in the same change. Record the version, date, files changed, behavior changed, and validation performed. Tell any subagent or collaborating agent to do the same.
 
 PRODUCT GOAL
-- The goal is to review EVERYTHING in EVERY loaded document. Form fields are reviewed individually; any page with no reviewed field (flat/scanned documents, instruction pages, pages whose fields are all skipped) gets a whole-page review item (targetKey page-review, kind 'document' for unrecognised documents).
+- The goal is to review EVERYTHING in EVERY loaded document. DECISION (2026-10-10): only ROMC and SIF have their fields reviewed individually; every other document (including Generator Alignment and the QC forms) is page review only (one whole-page item per page, targetKey page-review, kind 'document'). In ROMC/SIF any page with no reviewed field also gets a page review.
 The tool supports a complete Job Book Review. It is not ROMC-only: ROMC, SIF, and future job-book source types should use the same guided review experience. A reviewer works through fields one at a time, sees the source field and the required comparison target, and marks each target Verified or Issue.
 
 CURRENT REVIEW RULES
@@ -33,7 +33,7 @@ CURRENT UX
 - Review order is source kind (ROMC then SIF) and then visual top-to-bottom, left-to-right within each PDF page.
 
 JOB BOOK ANSWERS CSV AND COMPARISON
-- "Export answers CSV" (button #snc-snapshot) writes every ROMC/SIF field: Source, Section, Field name, Label, Value, State (Populated / N/A / Blank), Page, Category (date / initials / name / company / yesno / empty), Review (verified / issue / pending / empty when skipped), Issue note, Document.
+- "Export CSV" (button #snc-snapshot, formerly "Export answers CSV") writes every ROMC/SIF field: Source, Section, Field name, Label, Value, State (Populated / N/A / Blank), Page, Category (date / initials / name / company / yesno / empty), Review (verified / issue / pending / empty when skipped), Issue note, Document.
 - Blank fields are recorded at extraction (doc.blankFields, text/choice fields only; checkboxes and radios are ignored). Older saved documents without blankFields are re-extracted once on restore.
 - The compare card (above Review status) uploads a previous answers CSV (#snc-compare-file). It is kept in localStorage key snc-compare-baseline and compared with the loaded job book by Source + Field name + occurrence.
 - Summary: Fields / Populated / N/A / Blank counts (previous vs current) plus lists: blank now, filled now, N/A now, filled from N/A, different value, only in current, only in previous. Dates are always ignored; initials/names/company/yes-no follow the Skip toggles for the different-value list.
@@ -54,7 +54,7 @@ KEY FILES
 VERSIONING
 - Bump the visible version in index.html for each user-facing change.
 - Update both viewer.js?v=... and script.js?v=... cache-busting URLs to the same version.
-- Current version: v1.3.38.
+- Current version: v1.3.46.
 
 VALIDATION BASELINE
 - Run: node --check tools/pdf-serial-crosscheck/script.js
@@ -64,6 +64,43 @@ VALIDATION BASELINE
 - For viewer/persistence/highlight changes, load real PDFs, refresh, reopen a review, and confirm both the source and target PDF render with the expected highlights.
 
 RECENT CHANGE LOG
+2026-10-10 — v1.3.46
+- Whole-page review items no longer show the misleading "isn't in the text of p.N - look for it in the image" hint (no highlight text = no message).
+- Validation of v1.3.43-v1.3.45 in the preview with the real PDFs (SIF, Generator Alignment, QC Foundation Earthing, Bolt Certificates, Safety Cable): left tool rail + Documents panel + X close; document jump (SIF -> Bolt Certificates); + / - / 0 zoom with a toolbar button focused (287 -> 359 -> 287 -> 449 -> 287 px); Attach area captured at several zoom levels (0.5x-3x) and scroll positions with the correct aspect ratio and content (same-region thumbnails differ 3.6-10, a different region 17-20 on a 0-255 scale); pictures persisted across a reload. Note: after a zoom a page needs ~1.4 s to re-render; a capture during that moment crops what is visible on screen. Not yet checked: the issues PDF with pictures (jsPDF addImage path) was not downloaded/inspected.
+- Updated: viewer.js, index.html, this file.
+
+2026-10-10 — v1.3.45
+- Attach area crop now maps the selection through the canvas's own on-screen rectangle (not the page box) and clips to it, so it is correct at any zoom, scroll/pan position, or while a page is re-rendering.
+- Updated: viewer.js, index.html, this file.
+
+2026-10-10 — v1.3.44
+- + / = zoom in, - / _ zoom out, 0 resets zoom from anywhere in the viewer (previously only while a page area had keyboard focus, so they stopped working after clicking a toolbar button). They act on the pane under the mouse, or on every open pane if the mouse is not over one. A pane with focus still handles its own keys (no double zoom).
+- Updated: viewer.js, index.html, this file.
+
+2026-10-10 — v1.3.43
+- Attach area: selection now also uses the pointer-up position (quick drags without move events work) and setPointerCapture is wrapped in try/catch. Verified with synthetic pointer events: a thumbnail with caption "<doc> p.N" is attached and saved with the note.
+- Updated: viewer.js, index.html, this file.
+
+2026-10-10 — v1.3.42
+- Viewer Close is now an X button in the top-right corner of the overlay (still data-v="close", Esc still closes); removed from the left rail.
+- Updated: viewer.js, index.html, this file.
+
+2026-10-10 — v1.3.41
+- Removed the old full review-table "Export CSV" (#snc-csv and its handler). The former "Export answers CSV" button (#snc-snapshot) is now simply "Export CSV"; it is the only CSV export and the file the comparison upload expects.
+- Updated: script.js, index.html, this file.
+
+2026-10-10 — v1.3.40
+- Review overlay layout: a Photoshop-style tool rail on the LEFT (Previous/Next with counter, Verified/Issue/Clear, Next open) with a Documents panel underneath; title, target tabs, tip, note and the panes are in the main column. On narrow screens the rail stacks on top.
+- Documents panel: every document in the current review scope with done/total progress; clicking one jumps to its first open item (spec.docNav() returns the list; viewer re-renders it on open and after each mark). Built by documentNav() in script.js, in queue order.
+- Per-pane controls (page nav, zoom, pan) are still in each pane's own bar.
+- Updated: viewer.js, script.js, index.html, this file.
+
+2026-10-10 — v1.3.39
+- Decision: other than ROMC and SIF, documents are reviewed by page only (no field items, no blank/unticked items for them). The genalign/qcfound/qcturb kinds still exist in sourceKind/KIND_LABEL but compareJobBook treats them as kind 'document'.
+- Issue notes can carry pictures: the note panel has "Attach area" - click it, then drag a rectangle over any PDF pane; the area is cropped from the rendered page canvas (JPEG, max 1100 px wide) and attached to the note with its document and page. Thumbnails can be removed with the x. Esc cancels the selection.
+- Pictures are stored with the note (state.reviewNotes value {text, document, images:[{data,w,h,doc,page}]}, localStorage via saveReviews) and printed under the Issue note in the issues PDF, two per row with a document/page caption. They are NOT in the Excel XML export. Many large pictures could exceed the localStorage quota (saveReviews swallows the error).
+- Updated: script.js, viewer.js, index.html, this file. Validated node --check; see change log note below for interactive checks.
+
 2026-10-10 — v1.3.38
 - Every loaded document is now a review source. Unrecognised documents have kind 'document'. Any page with no reviewed field gets a whole-page review (label "<doc> – page N of M", value "Page N", no highlight rectangle). Scope option renamed "Other documents (forms and page review)".
 - Updated: script.js, index.html, this file.
