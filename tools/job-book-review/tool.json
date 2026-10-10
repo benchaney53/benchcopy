@@ -1,5 +1,5 @@
 {
-  "id": "pdf-serial-crosscheck",
+  "id": "job-book-review",
   "name": "Job Book Review",
   "description": "Review populated ROMC and SIF fields against required job-book documents and manual records",
   "icon": "<i class=\"fa-solid fa-barcode\"></i>",

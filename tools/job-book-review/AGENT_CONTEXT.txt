@@ -1,11 +1,11 @@
-JOB BOOK REVIEW (folder: pdf-serial-crosscheck) — CONTINUATION NOTES
+JOB BOOK REVIEW — CONTINUATION NOTES
 Last updated: 2026-10-10
-Current local build: v1.3.46
+Current local build: v1.3.49
 
 READ THIS FIRST
 - This is a browser-only Job Book Review tool. PDFs and review progress stay on the user's device; PDFs are never uploaded.
-- The working directory is tools/pdf-serial-crosscheck/.
-- The local preview URL is normally http://localhost:4173/tools/pdf-serial-crosscheck/.
+- The working directory is tools/job-book-review/.
+- The local preview URL is normally http://localhost:4173/tools/job-book-review/.
 - Do not commit, push, open a pull request, publish, or discard existing work unless the user explicitly asks in the current conversation.
 - The repository may already contain unrelated user changes. Preserve them.
 - IMPORTANT: Whenever you change this tool, update this file in the same change. Record the version, date, files changed, behavior changed, and validation performed. Tell any subagent or collaborating agent to do the same.
@@ -54,16 +54,30 @@ KEY FILES
 VERSIONING
 - Bump the visible version in index.html for each user-facing change.
 - Update both viewer.js?v=... and script.js?v=... cache-busting URLs to the same version.
-- Current version: v1.3.46.
+- Current version: v1.3.49.
 
 VALIDATION BASELINE
-- Run: node --check tools/pdf-serial-crosscheck/script.js
-- Run: node --check tools/pdf-serial-crosscheck/viewer.js
+- Run: node --check tools/job-book-review/script.js
+- Run: node --check tools/job-book-review/viewer.js
 - Run: git diff --check (existing CRLF warnings may appear; investigate actual whitespace errors).
 - Confirm the local preview serves the new visible version and relevant markup.
 - For viewer/persistence/highlight changes, load real PDFs, refresh, reopen a review, and confirm both the source and target PDF render with the expected highlights.
 
 RECENT CHANGE LOG
+2026-10-10 — v1.3.49
+- The per-step tip is now a larger, high-contrast callout (16 px, bold, accent border and tint, "TIP" label) in the previously empty top-right of the title bar, beside the title and target tabs, instead of a thin strip below the bar. The title bar is a CSS grid (title/targets left, tip right); on narrow screens the tip stacks under the targets.
+- Updated: viewer.js (tip element moved into .viewer-bar), index.html (CSS, version), this file.
+
+2026-10-10 — v1.3.48
+- Viewer tool rail redesigned: a narrow strip of square tool buttons (.tool-btn, inline SVG line icons, no emoji, short label under each icon, shortcut keys in tooltips) for Prev/Next (with the item counter), Verify/Issue/Clear and Next open; the Documents panel sits beside the strip. Verify/Issue show green/red when active. On narrow screens the strip becomes a horizontal row above the panel.
+- Button data-v values, .mark-ok/.mark-bad classes and keyboard shortcuts are unchanged.
+- Updated: viewer.js (markup), index.html (CSS, version), this file.
+
+2026-10-10 — v1.3.47
+- The tool's folder and URL are now tools/job-book-review/ (was tools/pdf-serial-crosscheck/); tool.json id is job-book-review and the manifest was regenerated. A small redirect page remains at tools/pdf-serial-crosscheck/ (keeps ?query and #hash) so old bookmarks still work.
+- Saved data (IndexedDB snc-persisted-documents, localStorage reviews/comparison CSV) is keyed by site origin, not by path, so it carries over to the new URL.
+- Updated: folder rename, tool.json, tools/tools-manifest.json, index.html (version), this file, new redirect stub.
+
 2026-10-10 — v1.3.46
 - Whole-page review items no longer show the misleading "isn't in the text of p.N - look for it in the image" hint (no highlight text = no message).
 - Validation of v1.3.43-v1.3.45 in the preview with the real PDFs (SIF, Generator Alignment, QC Foundation Earthing, Bolt Certificates, Safety Cable): left tool rail + Documents panel + X close; document jump (SIF -> Bolt Certificates); + / - / 0 zoom with a toolbar button focused (287 -> 359 -> 287 -> 449 -> 287 px); Attach area captured at several zoom levels (0.5x-3x) and scroll positions with the correct aspect ratio and content (same-region thumbnails differ 3.6-10, a different region 17-20 on a 0-255 scale); pictures persisted across a reload. Note: after a zoom a page needs ~1.4 s to re-render; a capture during that moment crops what is visible on screen. Not yet checked: the issues PDF with pictures (jsPDF addImage path) was not downloaded/inspected.

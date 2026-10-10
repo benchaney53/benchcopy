@@ -532,13 +532,17 @@
       '<div class="viewer-box">' +
       '<aside class="viewer-rail" aria-label="Review tools">' +
       '<div class="viewer-actions">' +
-      '<span class="viewer-step"><button type="button" class="btn btn-small" data-v="prev">&#8249; Previous <kbd>P</kbd> <kbd>&uarr;</kbd></button>' +
+      '<span class="viewer-step">' +
       '<span class="viewer-count"></span>' +
-      '<button type="button" class="btn btn-small" data-v="next">Next <kbd>N</kbd> <kbd>&darr;</kbd> &#8250;</button></span>' +
-      '<span class="viewer-mark"><button type="button" class="btn btn-small mark-ok" data-v="verified">&#10003; Verified <kbd>V</kbd></button>' +
-      '<button type="button" class="btn btn-small mark-bad" data-v="issue">&#9888; Issue <kbd>I</kbd></button>' +
-      '<button type="button" class="btn btn-small" data-v="clear">Clear <kbd>U</kbd></button></span>' +
-      '<button type="button" class="btn btn-small" data-v="unresolved">Next open <kbd>Space</kbd></button>' +
+      '<button type="button" class="tool-btn" data-v="prev" title="Previous item (P or Up arrow)" aria-label="Prev"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg><span>Prev</span></button>' +
+      '<button type="button" class="tool-btn" data-v="next" title="Next item (N or Down arrow)" aria-label="Next"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg><span>Next</span></button>' +
+      '</span>' +
+      '<span class="viewer-mark">' +
+      '<button type="button" class="tool-btn mark-ok" data-v="verified" title="Mark Verified (V)" aria-label="Verify"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Verify</span></button>' +
+      '<button type="button" class="tool-btn mark-bad" data-v="issue" title="Mark Issue and add a note (I)" aria-label="Issue"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 21V4"/><path d="M6 5h11l-2.2 4L17 13H6"/></svg><span>Issue</span></button>' +
+      '<button type="button" class="tool-btn" data-v="clear" title="Clear this mark (U)" aria-label="Clear"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M9 9l6 6M15 9l-6 6"/></svg><span>Clear</span></button>' +
+      '</span>' +
+      '<button type="button" class="tool-btn" data-v="unresolved" title="Jump to the next open item (Space)" aria-label="Next open"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l6 6 6-6"/><path d="M6 13l6 6 6-6"/></svg><span>Next open</span></button>' +
       '</div>' +
       '<div class="viewer-docs-wrap" hidden><div class="viewer-docs-title">Documents</div><div class="viewer-docs"></div></div>' +
       '</aside>' +
@@ -547,8 +551,8 @@
       '<button type="button" class="viewer-close" data-v="close" title="Close (Esc)" aria-label="Close">&times;</button>' +
       '<div class="viewer-title"></div>' +
       '<div class="viewer-targets" aria-label="Required review targets"></div>' +
+      '<div class="viewer-tip" role="note" hidden></div>' +
       '</div>' +
-      '<div class="viewer-tip" hidden></div>' +
       '<form class="viewer-note" hidden><label><strong>Issue note <span class="src">(optional &middot; one per item)</span></strong><textarea placeholder="Describe what is wrong or what needs follow-up…" aria-label="Issue note"></textarea></label><label><strong>Attach to document</strong><select aria-label="Attach issue note to document"></select></label><button type="button" class="btn btn-small" data-v="capture" title="Click, then drag over a PDF to attach a picture of that area to this note">&#9986; Attach area</button><span class="note-error">Saved automatically</span><div class="note-images"></div></form>' +
       '<div class="viewer-panes"><div class="pane"></div><div class="pane"></div><div class="pane"></div><div class="pane"></div></div>' +
       '</div></div>';

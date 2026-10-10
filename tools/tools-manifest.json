@@ -8,6 +8,18 @@
     "icon": "📁"
   },
   {
+    "id": "job-book-review",
+    "name": "Job Book Review",
+    "description": "Review populated ROMC and SIF fields against required job-book documents and manual records",
+    "icon": "<i class=\"fa-solid fa-barcode\"></i>",
+    "category": "PDF Tools",
+    "technologies": [
+      "PDF.js",
+      "JSZip",
+      "JavaScript"
+    ]
+  },
+  {
     "id": "new-run-test-tool",
     "hidden": true,
     "name": "Enhanced Run Test Analyzer",
@@ -42,18 +54,6 @@
     "technologies": [
       "PDF.js",
       "pdf-lib",
-      "JavaScript"
-    ]
-  },
-  {
-    "id": "pdf-serial-crosscheck",
-    "name": "Job Book Review",
-    "description": "Review populated ROMC and SIF fields against required job-book documents and manual records",
-    "icon": "<i class=\"fa-solid fa-barcode\"></i>",
-    "category": "PDF Tools",
-    "technologies": [
-      "PDF.js",
-      "JSZip",
       "JavaScript"
     ]
   },
