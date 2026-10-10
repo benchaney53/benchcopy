@@ -1,6 +1,6 @@
 JOB BOOK REVIEW (folder: pdf-serial-crosscheck) — CONTINUATION NOTES
 Last updated: 2026-10-10
-Current local build: v1.3.35
+Current local build: v1.3.38
 
 READ THIS FIRST
 - This is a browser-only Job Book Review tool. PDFs and review progress stay on the user's device; PDFs are never uploaded.
@@ -11,10 +11,11 @@ READ THIS FIRST
 - IMPORTANT: Whenever you change this tool, update this file in the same change. Record the version, date, files changed, behavior changed, and validation performed. Tell any subagent or collaborating agent to do the same.
 
 PRODUCT GOAL
+- The goal is to review EVERYTHING in EVERY loaded document. Form fields are reviewed individually; any page with no reviewed field (flat/scanned documents, instruction pages, pages whose fields are all skipped) gets a whole-page review item (targetKey page-review, kind 'document' for unrecognised documents).
 The tool supports a complete Job Book Review. It is not ROMC-only: ROMC, SIF, and future job-book source types should use the same guided review experience. A reviewer works through fields one at a time, sees the source field and the required comparison target, and marks each target Verified or Issue.
 
 CURRENT REVIEW RULES
-- Review every populated, non-N/A field in ROMC and SIF. Skip toggles on the launch card (state.skip, persisted in the session): Dates (default ON), Initials, Names, Company, Yes/No answers (default OFF). Skipped fields never enter the review queue.
+- Review every populated, non-N/A field in ROMC and SIF. Skip toggles on the launch card (state.skip, persisted in the session): Dates (default ON), Initials, Names, Company, Version numbers, Yes/No answers (default OFF). Skipped fields never enter the review queue.
 - One source form field is one field even if its value has commas, semicolons, ampersands, or several serial-like pieces. Punctuation must never create additional reviews.
 - Create another review only for a distinct verification target: a different document or a different required area in the same document.
 - Repeated appearances within one target area do not create additional reviews.
@@ -53,7 +54,7 @@ KEY FILES
 VERSIONING
 - Bump the visible version in index.html for each user-facing change.
 - Update both viewer.js?v=... and script.js?v=... cache-busting URLs to the same version.
-- Current version: v1.3.35.
+- Current version: v1.3.38.
 
 VALIDATION BASELINE
 - Run: node --check tools/pdf-serial-crosscheck/script.js
@@ -63,6 +64,22 @@ VALIDATION BASELINE
 - For viewer/persistence/highlight changes, load real PDFs, refresh, reopen a review, and confirm both the source and target PDF render with the expected highlights.
 
 RECENT CHANGE LOG
+2026-10-10 — v1.3.38
+- Every loaded document is now a review source. Unrecognised documents have kind 'document'. Any page with no reviewed field gets a whole-page review (label "<doc> – page N of M", value "Page N", no highlight rectangle). Scope option renamed "Other documents (forms and page review)".
+- Updated: script.js, index.html, this file.
+
+2026-10-10 — v1.3.37
+- More forms are reviewed as their own sources (every populated field, one manual "Form accuracy and completeness review" target each): Generator Alignment Form, QC Foundation Earthing, QC Earthing Between Turbines (kinds genalign / qcfound / qcturb; labels in KIND_LABEL). New review scope "Other forms only".
+- Checkboxes are now extracted (formV 2): ticked = value "Checked" (a normal populated field), unticked = a blank. Radio buttons and push buttons are still ignored. Stored documents without formV 2 are re-extracted once on restore.
+- Blank fields and unticked boxes are flagged in the review queue (targets blank-field / unticked-box, values "(blank)" / "(unticked)") unless the new Skip toggle "Blank / unticked fields" is on. The other Skip toggles also apply to blanks (e.g. blank dates are skipped).
+- Required-document list now also includes Base Level Report, QC Foundation Earthing, QC Earthing Between Turbines, Hardware Lubrication Checklist, Flange Reports, Generator Alignment Form, Foundation Tensioning/Concrete/Grout, 10 Percent Checklist (all can be ignored per site).
+- Answers CSV / comparison: Source column now uses the form label (ROMC, SIF, Generator Alignment, ...), comparison keys use it lowercased; review state also reported for blanks/unticked.
+- Updated: script.js, index.html, this file. Findings behind this: in Documents.zip only ROMC, SIF, Generator Alignment, the two QC forms and Foundation Tensioning have form fields; the other documents are flat PDFs (searched for ROMC values only). Foundation Tensioning (2 blank text fields) is required as a document but not reviewed as a source.
+
+2026-10-10 — v1.3.36
+- Added a "Version numbers" skip toggle (default off): skips fields whose name/label mentions version, firmware, software, SW, revision or rev. Also a 'version' Category in the answers CSV and the comparison's Skip handling.
+- Updated: script.js, index.html, this file. Validated node --check.
+
 2026-10-10 — v1.3.35
 - Review overlay now shows all required documents at once (source + up to three target panes) instead of one target at a time; manual-check targets have no pane. At 3+ panes the per-pane pan buttons and gesture hint are hidden (W/A/S/D and mouse panning still work).
 - viewer.js: panes array (source + 3 target panes), per-pane target label and active outline; spec.targets drives which panes show. index.html: pane label/outline CSS.

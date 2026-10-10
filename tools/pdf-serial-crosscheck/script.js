@@ -15,7 +15,7 @@
 
   // docs: { name, short, numPages, pages:[{text, norm, hasText}], fieldList:[{name,value,page,label,section}],
   //         fields:{name:Set}, text, error }
-  const state = { docs: [], refIdx: -1, refAuto: true, mode: 'jobbook', rowsB: [], jb: null, jbRows: [], reviews: new Map(), reviewNotes: new Map(), reviewsFor: '', reviewPosition: null, reviewScope: 'all', ignoredDocTypes: [], baseline: null, skip: { dates: true, initials: false, names: false, company: false, yesno: false } };
+  const state = { docs: [], refIdx: -1, refAuto: true, mode: 'jobbook', rowsB: [], jb: null, jbRows: [], reviews: new Map(), reviewNotes: new Map(), reviewsFor: '', reviewPosition: null, reviewScope: 'all', ignoredDocTypes: [], baseline: null, skip: { dates: true, initials: false, names: false, company: false, version: false, yesno: false, blanks: false } };
 
   // Keep the original PDF blobs, as well as their extracted text, in IndexedDB.
   // localStorage is deliberately not used here: a normal job book can be far too
@@ -45,7 +45,7 @@
   function storedDoc(d) {
     return {
       id: d.id, name: d.name, blob: d.blob, numPages: d.numPages, pages: d.pages,
-      fieldList: d.fieldList, blankFields: d.blankFields, fields: Object.fromEntries(Object.entries(d.fields).map(([k, v]) => [k, [...v]])),
+      fieldList: d.fieldList, blankFields: d.blankFields, formV: d.formV, fields: Object.fromEntries(Object.entries(d.fields).map(([k, v]) => [k, [...v]])),
       text: d.text, error: d.error,
     };
   }
@@ -101,7 +101,7 @@
       // Older saved sessions predate form-field rectangles. Re-extract only those
       // PDFs once, so future reviews can point to the actual source field instead
       // of guessing from a repeated label or value.
-      const missingLocations = state.docs.filter(d => d.fieldList && (!Array.isArray(d.blankFields) || d.blankFields.some(f => !Array.isArray(f.rect)) || d.fieldList.some(f => !Array.isArray(f.rect))));
+      const missingLocations = state.docs.filter(d => d.fieldList && (d.formV !== 2 || d.blankFields.some(f => !Array.isArray(f.rect)) || d.fieldList.some(f => !Array.isArray(f.rect))));
       if (missingLocations.length) {
         await Promise.all(missingLocations.map(async oldDoc => {
           try {
@@ -118,7 +118,7 @@
       state.refAuto = session.refAuto !== false;
       state.refIdx = state.docs.findIndex(d => d.id === session.refId);
       state.reviewPosition = session.reviewPosition || null;
-      state.reviewScope = ['all', 'romc', 'sif'].includes(session.reviewScope) ? session.reviewScope : 'all';
+      state.reviewScope = ['all', 'romc', 'sif', 'other'].includes(session.reviewScope) ? session.reviewScope : 'all';
       state.ignoredDocTypes = Array.isArray(session.ignoredDocTypes) ? session.ignoredDocTypes.filter(k => typeof k === 'string') : [];
       if (session.skip && typeof session.skip === 'object') Object.keys(state.skip).forEach(k => { if (typeof session.skip[k] === 'boolean') state.skip[k] = session.skip[k]; });
       if (state.refIdx < 0) state.refAuto = true;
@@ -241,7 +241,7 @@
   }
 
   async function extract(file, displayName) {
-    const doc = { id: newDocumentId(), name: displayName || file.name, blob: file, numPages: 0, pages: [], fieldList: [], blankFields: [], fields: {}, text: '', error: null };
+    const doc = { id: newDocumentId(), name: displayName || file.name, blob: file, numPages: 0, pages: [], fieldList: [], blankFields: [], formV: 2, fields: {}, text: '', error: null };
     let pdf;
     try {
       const data = new Uint8Array(await file.arrayBuffer());
@@ -291,7 +291,13 @@
             if (c && c.trim()) notes.push(c.replace(/\r/g, '\n').trim());
             continue;
           }
-          if (!a.fieldName || a.checkBox || a.radioButton || a.pushButton) continue;
+          if (!a.fieldName || a.radioButton || a.pushButton) continue;
+          if (a.checkBox) {
+            // Ticked boxes are answers ("Checked"); unticked ones are recorded as blanks.
+            const on = a.fieldValue != null && a.fieldValue !== '' && a.fieldValue !== 'Off';
+            widgets.push({ name: a.fieldName, value: on ? 'Checked' : '', page: p, rect: a.rect, row: rowLabel(items, a.rect), blank: !on, checkbox: true });
+            continue;
+          }
           let v = a.fieldValue;
           if (v == null || v === '' || v === 'Off') { widgets.push({ name: a.fieldName, value: '', page: p, rect: a.rect, row: rowLabel(items, a.rect), blank: true }); continue; }
           if (Array.isArray(v)) v = v.join(', ');
@@ -317,8 +323,8 @@
         }
         const secLabel = sec ? `${sec.num} ${sec.title}` : '';
         const label = [secLabel, w.row].filter(Boolean).join(' – ') || w.name;
-          if (w.blank) { doc.blankFields.push({ name: w.name, page: w.page, label, section: sec ? sec.num : '', rect: w.rect }); continue; }
-          doc.fieldList.push({ name: w.name, value: w.value, page: w.page, label, section: sec ? sec.num : '', rect: w.rect });
+          if (w.blank) { doc.blankFields.push({ name: w.name, page: w.page, label, section: sec ? sec.num : '', rect: w.rect, checkbox: !!w.checkbox }); continue; }
+          doc.fieldList.push({ name: w.name, value: w.value, page: w.page, label, section: sec ? sec.num : '', rect: w.rect, checkbox: !!w.checkbox });
         (doc.fields[w.name] ||= new Set()).add(w.value);
       }
       doc.text = texts.join('\n');
@@ -475,6 +481,8 @@
       /^\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{2,4}$/i.test(v);
   };
   const isInitialsField = field => /initial/i.test(`${field.name || ''} ${field.label || ''}`);
+  // Software / firmware / document version numbers, identified by their label.
+  const isVersionField = field => /\bversion\b|\bver\.|firmware|software|\bsw\b|\brevision\b|\brev\b/i.test(`${field.name || ''} ${field.label || ''}`);
   const isCompanyField = field => /company|contractor|manufacturer|supplier|vendor|customer|client|employer|organi[sz]ation/i.test(`${field.name || ''} ${field.label || ''}`);
   // A person's name: signatory/technician style labels, not site, turbine or component names.
   const isPersonNameField = field => {
@@ -482,18 +490,25 @@
     return /\b(?:name|technician|inspector|engineer|supervisor|witness|signed.?by|performed.?by|checked.?by|approved.?by|completed.?by|prepared.?by|reviewed.?by)\b/i.test(label) &&
       !/manufacturer|company|site|farm|project|turbine|component|part|model|tower|file|document|wtg|pad/i.test(label);
   };
-  const isYesNoValue = value => /^(?:yes|no|y|n|true|false|yes\s*\/\s*no)$/i.test(String(value || '').trim());
+  const isYesNoValue = value => /^(?:yes|no|y|n|true|false|yes\s*\/\s*no|checked|unchecked|ticked|unticked)$/i.test(String(value || '').trim());
   const shouldSkipField = (field, value) =>
     (state.skip.dates && isDateField(field, value)) ||
     (state.skip.initials && isInitialsField(field)) ||
     (state.skip.names && isPersonNameField(field)) ||
     (state.skip.company && isCompanyField(field)) ||
+    (state.skip.version && isVersionField(field)) ||
     (state.skip.yesno && isYesNoValue(value));
   const docTarget = (key, label, re, photo) => ({ key, label, re, photo: !!photo });
   const manualTarget = (key, label) => ({ key, label, manual: true });
+  // Forms whose own fields are reviewed (ROMC and SIF have document cross-checks; the others are reviewed on their own).
+  const KIND_LABEL = { romc: 'ROMC', sif: 'SIF', genalign: 'Generator Alignment', qcfound: 'QC Foundation Earthing', qcturb: 'QC Earthing Between Turbines', document: 'Document' };
+  const kindLabel = kind => KIND_LABEL[kind] || String(kind).toUpperCase();
   function sourceKind(doc) {
     if (/recording.?of.?main.?components|\bromc\b/i.test(doc.name)) return 'romc';
     if (/service.?inspection.?form|\bsif\b/i.test(doc.name)) return 'sif';
+    if (/generator.?alignment/i.test(doc.name)) return 'genalign';
+    if (/earthing.?between/i.test(doc.name)) return 'qcturb';
+    if (/foundation.?earthing/i.test(doc.name)) return 'qcfound';
     return null;
   }
   // Every document type in the Review Guide is required by default. A site that
@@ -507,6 +522,14 @@
     { key: 'safety', label: 'Safety Cable Inspection', re: /safety.?cable|fall.?arrest|wire.?rope/i, suggested: 'Safety_Cable_Inspection_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
     { key: 'mechanical', label: 'Mechanical Completion Checklist', re: /mechanical.?completion/i, suggested: 'Mechanical_Completion_Checklist_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
     { key: 'bolts', label: 'Bolt Certificates', re: /bolt.?cert/i, suggested: 'Bolt_Certificates_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
+    { key: 'baseLevel', label: 'Base Level Report', re: /base.?level/i, required: () => true },
+    { key: 'qcFoundation', label: 'Quality Control Foundation Earthing', re: /foundation.?earthing/i, required: () => true },
+    { key: 'qcTurbines', label: 'Quality Control of Earthing Between Turbines', re: /earthing.?between/i, required: () => true },
+    { key: 'hardware', label: 'Hardware Lubrication Checklist', re: /hardware.?lubrication/i, required: () => true },
+    { key: 'flange', label: 'Flange Reports', re: /flange/i, required: () => true },
+    { key: 'genAlign', label: 'Generator Alignment Form', re: /generator.?alignment/i, required: () => true },
+    { key: 'tensioning', label: 'Foundation Tensioning, Concrete and Grout Documents', re: /foundation.?tensioning|tensioning/i, required: () => true },
+    { key: 'tenPercent', label: '10 Percent Checklist', re: /10.?percent/i, required: () => true },
     { key: 'serviceLift', label: 'Service Lift Installation Checklist', re: /service.?lift/i, suggested: 'Service_Lift_Installation_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
     { key: 'aviation', label: 'Aviation Light Manual', re: /aviation|faa|obstruction/i, suggested: 'Aviation_Light_Manual_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
   ];
@@ -514,6 +537,7 @@
   function requiredDocumentTypes() { return documentTypes.filter(type => type.required(state.docs) && !isDocTypeIgnored(type)); }
   function targetsFor(source, field) {
     const sec = field.section || '';
+    if (source !== 'romc' && source !== 'sif') return [manualTarget('form-review', 'Form accuracy and completeness review')];
     if (source === 'sif') {
       const targets = [manualTarget('sif-completeness', 'SIF completeness, dates, signatures and N/A review')];
       if (field.page <= 4) targets.push(docTarget('romc-header', 'ROMC turbine / pad / WTG header', /recording.?of.?main.?components|\bromc\b/i));
@@ -561,8 +585,8 @@
     return (a.page - b.page) || (top(b) - top(a)) || (left(a) - left(b)) || a.label.localeCompare(b.label);
   }
   function reviewTableOrder(a, b) {
-    const sourceOrder = { romc: 0, sif: 1 };
-    return ((sourceOrder[a.sourceKind] ?? 9) - (sourceOrder[b.sourceKind] ?? 9)) || reviewLocationOrder(a, b) || a.targetLabel.localeCompare(b.targetLabel);
+    const sourceOrder = { romc: 0, sif: 1, genalign: 2, qcfound: 3, qcturb: 4 };
+    return ((sourceOrder[a.sourceKind] ?? 9) - (sourceOrder[b.sourceKind] ?? 9)) || ((a.sourceIdx || 0) - (b.sourceIdx || 0)) || reviewLocationOrder(a, b) || a.targetLabel.localeCompare(b.targetLabel);
   }
   function noteDetails(note) {
     if (!note) return { text: '', document: null };
@@ -574,7 +598,7 @@
   }
   function reviewTip(entry) {
     const target = entry.targetLabel;
-    const common = `Compare the highlighted ${entry.sourceKind.toUpperCase()} field with ${target}. Mark Verified only when the value is present and matches.`;
+    const common = `Compare the highlighted ${kindLabel(entry.sourceKind)} field with ${target}. Mark Verified only when the value is present and matches.`;
     switch (entry.targetKey) {
       case 'romc-header': return `${common} This is a turbine / pad / WTG header check.`;
       case 'sif-header': return `${common} This is a turbine / pad / WTG header check.`;
@@ -590,13 +614,17 @@
       case 'ih10-vdd': return `${common} Find the matching component entry in IH10 and VDD.`;
       case 'tracker-aviation': return `${common} Check the project tracker for a duplicate serial.`;
       case 'tracker-special': return `${common} Check the project tracker for a duplicate serial.`;
+      case 'form-review': return `Check that this ${kindLabel(entry.sourceKind)} entry is complete, legible and correct. Mark Issue if it needs follow-up.`;
+      case 'page-review': return 'Read the whole page. Mark Verified when everything on it is complete, legible and correct; mark Issue if anything needs follow-up.';
+      case 'blank-field': return 'This field was left blank. Confirm it is allowed to be empty (or should be N/A). Mark Issue if it must be completed.';
+      case 'unticked-box': return 'This box is not ticked. Confirm that is correct. Mark Issue if it should be ticked.';
       case 'sif-completeness': return `Confirm this SIF field is complete and accurate. Mark Issue if its required supporting information is missing or needs follow-up.`;
       default: return common;
     }
   }
   function viewerDocuments() { return state.docs.map((doc, index) => ({ id: doc.id, name: doc.name, index })); }
   function compareJobBook() {
-    const sources = state.docs.map((d, i) => ({ d, i, kind: sourceKind(d) })).filter(x => x.kind && !x.d.error);
+    const sources = state.docs.map((d, i) => ({ d, i, kind: sourceKind(d) || 'document' })).filter(x => !x.d.error);
     if (!sources.length) { state.jb = null; return; }
     const entries = [];
     for (const { d, i, kind } of sources) {
@@ -626,6 +654,18 @@
           }
           entries.push(entry);
         }
+      }
+      // Blank fields and unticked boxes are flagged for review unless the Skip toggle is on.
+      if (!state.skip.blanks) for (const f of d.blankFields || []) {
+        if (shouldSkipField(f, '')) continue;
+        const target = f.checkbox ? manualTarget('unticked-box', 'Unticked box: confirm it should be unticked') : manualTarget('blank-field', 'Blank field: confirm it may be empty');
+        entries.push({ sourceId: d.id || d.name, sourceIdx: i, sourceKind: kind, name: f.name, label: f.label, value: f.checkbox ? '(unticked)' : '(blank)', n: '', page: f.page, rect: f.rect, section: f.section, targetKey: target.key, targetLabel: target.label, expected: [], found: [], scanPages: [], status: 'manual' });
+      }
+      // Everything in every document is reviewed: any page with no reviewed field gets a whole-page review.
+      const covered = new Set(entries.filter(e => e.sourceIdx === i).map(e => e.page));
+      for (let p = 1; p <= (d.numPages || 0); p++) {
+        if (covered.has(p)) continue;
+        entries.push({ sourceId: d.id || d.name, sourceIdx: i, sourceKind: kind, name: `page-${p}`, label: `${d.short || d.name} – page ${p} of ${d.numPages}`, value: `Page ${p}`, n: '', page: p, rect: null, section: '', targetKey: 'page-review', targetLabel: 'Whole-page review: confirm everything on the page is complete and correct', expected: [], found: [], scanPages: [], status: 'manual', pageReview: true });
       }
     }
     entries.sort(reviewTableOrder);
@@ -700,8 +740,8 @@
       const complete = groups.reduce((n, group) => n + group.targets.filter(e => state.reviews.get(reviewKey(e)) === 'verified').length, 0);
       return { total, complete };
     };
-    const allProgress = progress('all'), romcProgress = progress('romc'), sifProgress = progress('sif');
-    launcher.innerHTML = `<section class="review-launcher" aria-label="Start Job Book Review"><div class="review-launcher-copy"><strong>Start Job Book Review</strong><span>Review every required field one at a time, with its source and matching job-book record side by side.</span></div><label class="review-scope-label">Review<select id="snc-review-scope" aria-label="Review scope"><option value="all"${state.reviewScope === 'all' ? ' selected' : ''}>All job book fields</option><option value="romc"${state.reviewScope === 'romc' ? ' selected' : ''}>ROMC fields only</option><option value="sif"${state.reviewScope === 'sif' ? ' selected' : ''}>SIF fields only</option></select></label><button type="button" class="btn btn-review-start" data-start-review${allProgress.total ? '' : ' disabled'}>Start / resume review</button><div class="review-skip" role="group" aria-label="Fields to skip"><span>Skip:</span>${[['dates', 'Dates'], ['initials', 'Initials'], ['names', 'Names'], ['company', 'Company'], ['yesno', 'Yes / No answers']].map(([k, t]) => `<label><input type="checkbox" data-skip="${k}"${state.skip[k] ? ' checked' : ''}> ${t}</label>`).join('')}</div><div class="review-launcher-progress">All <strong>${allProgress.complete}/${allProgress.total}</strong> &middot; ROMC <strong>${romcProgress.complete}/${romcProgress.total}</strong> &middot; SIF <strong>${sifProgress.complete}/${sifProgress.total}</strong></div></section>`;
+    const allProgress = progress('all'), romcProgress = progress('romc'), sifProgress = progress('sif'), otherProgress = progress('other');
+    launcher.innerHTML = `<section class="review-launcher" aria-label="Start Job Book Review"><div class="review-launcher-copy"><strong>Start Job Book Review</strong><span>Review every required field one at a time, with its source and matching job-book record side by side.</span></div><label class="review-scope-label">Review<select id="snc-review-scope" aria-label="Review scope"><option value="all"${state.reviewScope === 'all' ? ' selected' : ''}>All job book fields</option><option value="romc"${state.reviewScope === 'romc' ? ' selected' : ''}>ROMC fields only</option><option value="sif"${state.reviewScope === 'sif' ? ' selected' : ''}>SIF fields only</option><option value="other"${state.reviewScope === 'other' ? ' selected' : ''}>Other documents (forms and page review)</option></select></label><button type="button" class="btn btn-review-start" data-start-review${allProgress.total ? '' : ' disabled'}>Start / resume review</button><div class="review-skip" role="group" aria-label="Fields to skip"><span>Skip:</span>${[['dates', 'Dates'], ['initials', 'Initials'], ['names', 'Names'], ['company', 'Company'], ['version', 'Version numbers'], ['yesno', 'Yes / No answers'], ['blanks', 'Blank / unticked fields']].map(([k, t]) => `<label><input type="checkbox" data-skip="${k}"${state.skip[k] ? ' checked' : ''}> ${t}</label>`).join('')}</div><div class="review-launcher-progress">All <strong>${allProgress.complete}/${allProgress.total}</strong> &middot; ROMC <strong>${romcProgress.complete}/${romcProgress.total}</strong> &middot; SIF <strong>${sifProgress.complete}/${sifProgress.total}</strong>${otherProgress.total ? ` &middot; Other documents <strong>${otherProgress.complete}/${otherProgress.total}</strong>` : ''}</div></section>`;
     if (nVer || nIss) sum.innerHTML += `<p class="src">Your review: ${nVer} verified · ${nIss} marked as issue</p>`;
     if (unresolvedLegacy) sum.innerHTML += `<p class="src">${unresolvedLegacy} earlier review mark${unresolvedLegacy === 1 ? '' : 's'} kept for reference because this field now has multiple separate targets.</p>`;
 
@@ -718,7 +758,7 @@
       const issue = noteDetails(note);
       const badge = mark ? `<div><span class="mark mark-${mark}">${mark === 'verified' ? '✓ Verified' : '⚠ Issue'}</span>${issue.text ? `<div class="src">${esc(issue.text)}${esc(noteLabel(note))}</div>` : issue.document ? `<div class="src">Attached to ${esc(issue.document.name)}</div>` : ''}</div>` : '';
       h += `<tr${mark ? ` class="row-${mark}"` : ''}><td><span class="st st-${JB[e.status].c}">${JB[e.status].t}</span>${badge}</td>` +
-        `<td>${esc(e.sourceKind.toUpperCase())}: ${esc(e.label)}<div class="src">${openLink(e.sourceIdx, e.page, e.value, `${e.sourceKind.toUpperCase()} p.` + e.page)}</div></td>` +
+        `<td>${esc(kindLabel(e.sourceKind))}: ${esc(e.label)}<div class="src">${openLink(e.sourceIdx, e.page, e.value, `${kindLabel(e.sourceKind)} p.` + e.page)}</div></td>` +
         `<td><span class="chip ${JB[e.status].c}">${esc(e.value)}</span></td><td>${esc(e.targetLabel)}</td><td>${found}</td><td class="notes">${jbDetail(e)}</td>` +
         `<td><button type="button" class="btn btn-small" data-review="${k}">Review</button></td></tr>`;
     });
@@ -840,7 +880,7 @@
     $('snc-csv').disabled = !(state.jb && state.jb.entries.length);
     $('snc-issues-csv').disabled = !state.jb || !state.jb.entries.some(e => state.reviews.get(reviewKey(e)) === 'issue');
     $('snc-issues-pdf').disabled = $('snc-issues-csv').disabled;
-    $('snc-snapshot').disabled = !state.docs.some(d => !d.error && sourceKind(d));
+    $('snc-snapshot').disabled = !state.docs.some(d => !d.error);
     renderCompare();
   }
 
@@ -998,7 +1038,9 @@
   }
   function reviewGroups(scope = state.reviewScope) {
     const groups = state.jb && state.jb.groups || [];
-    return scope === 'all' ? groups : groups.filter(group => group.entry.sourceKind === scope);
+    if (scope === 'all') return groups;
+    if (scope === 'other') return groups.filter(group => group.entry.sourceKind !== 'romc' && group.entry.sourceKind !== 'sif');
+    return groups.filter(group => group.entry.sourceKind === scope);
   }
   function rememberReviewPosition(entry, scope) {
     state.reviewPosition = { scope, field: fieldKey(entry), target: reviewKey(entry) };
@@ -1045,8 +1087,8 @@
     const entry = group.targets[targetIndex];
     rememberReviewPosition(entry, scope);
     viewer.open({
-      title: `<strong>${esc(group.entry.sourceKind.toUpperCase())}: ${esc(group.entry.label)}</strong> <span class="chip ${JB[entry.status].c}">${esc(group.entry.value)}</span>`,
-      left: { doc: group.entry.sourceIdx, page: group.entry.page, hl: [group.entry.label, group.entry.value], rect: group.entry.rect, sure: true },
+      title: `<strong>${esc(kindLabel(group.entry.sourceKind))}: ${esc(group.entry.label)}</strong> <span class="chip ${JB[entry.status].c}">${esc(group.entry.value)}</span>`,
+      left: { doc: group.entry.sourceIdx, page: group.entry.page, hl: group.entry.pageReview ? [] : [group.entry.label, group.entry.value], rect: group.entry.rect, sure: true },
       targets: group.targets.map(target => ({
         label: target.targetLabel, right: reviewTarget(target),
         status: state.reviews.get(reviewKey(target)) || null,
@@ -1067,7 +1109,7 @@
     const groupIndex = groups.findIndex(group => group.key === fieldKey(e));
     if (groupIndex >= 0) return openReviewGroup(groupIndex, targetIndexFor(groups[groupIndex], reviewKey(e)), 'all');
     viewer.open({
-      title: `<span class="st st-${JB[e.status].c}">${JB[e.status].t}</span> <strong>${esc(e.sourceKind.toUpperCase())}: ${esc(e.label)}</strong> <span class="chip ${JB[e.status].c}">${esc(e.value)}</span> <span class="src">→ ${esc(e.targetLabel)}</span>`,
+      title: `<span class="st st-${JB[e.status].c}">${JB[e.status].t}</span> <strong>${esc(kindLabel(e.sourceKind))}: ${esc(e.label)}</strong> <span class="chip ${JB[e.status].c}">${esc(e.value)}</span> <span class="src">→ ${esc(e.targetLabel)}</span>`,
       left: { doc: e.sourceIdx, page: e.page, hl: [e.label, e.value], rect: e.rect, sure: true }, right: reviewTarget(e),
       documents: viewerDocuments(),
       tip: reviewTip(e),
@@ -1133,6 +1175,7 @@
     if (isDateField(field, value)) return 'date';
     if (isInitialsField(field)) return 'initials';
     if (isCompanyField(field)) return 'company';
+    if (isVersionField(field)) return 'version';
     if (isPersonNameField(field)) return 'name';
     if (value && isYesNoValue(value)) return 'yesno';
     return '';
@@ -1148,15 +1191,16 @@
     }
     const rows = [];
     for (const [docIndex, d] of state.docs.entries()) {
-      const kind = sourceKind(d);
-      if (!kind || d.error) continue;
+      const kind = sourceKind(d) || 'document';
+      if (d.error) continue;
+      const sourceLabel = kind === 'document' ? (d.short || d.name) : kindLabel(kind);
       const seen = new Map();
       const add = (f, value, blank) => {
-        const base = `${kind}|${f.name}`, n = seen.get(base) || 0;
+        const base = `${sourceLabel.toLowerCase()}|${f.name}`, n = seen.get(base) || 0;
         seen.set(base, n + 1);
-        const r = blank ? null : byField.get(fieldKey({ sourceId: d.id || d.name, name: f.name, label: f.label, value, page: f.page }));
+        const r = byField.get(fieldKey({ sourceId: d.id || d.name, name: f.name, label: f.label, value: blank ? (f.checkbox ? '(unticked)' : '(blank)') : value, page: f.page }));
         rows.push({
-          key: `${base}#${n}`, source: kind.toUpperCase(), section: f.section || '', name: f.name, label: f.label || '', value,
+          key: `${base}#${n}`, source: sourceLabel, section: f.section || '', name: f.name, label: f.label || '', value,
           state: blank ? 'Blank' : isNA(value) ? 'N/A' : 'Populated', page: f.page, category: fieldCategory(f, value),
           review: r ? (r.marks.includes('issue') ? 'issue' : r.marks.every(x => x === 'verified') ? 'verified' : 'pending') : '',
           note: r ? r.notes.join(' | ') : '', document: d.name, docIndex, rect: f.rect,
@@ -1204,7 +1248,7 @@
       if (state.baseline) localStorage.setItem('snc-compare-baseline', JSON.stringify(state.baseline)); else localStorage.removeItem('snc-compare-baseline');
     } catch (e) { console.warn('Could not store the comparison CSV:', e); }
   }
-  const SKIP_FOR_CATEGORY = { initials: 'initials', name: 'names', company: 'company', yesno: 'yesno' };
+  const SKIP_FOR_CATEGORY = { initials: 'initials', name: 'names', company: 'company', version: 'version', yesno: 'yesno' };
   function compareSnapshots(prev, cur) {
     const prevMap = new Map(prev.map(r => [r.key, r])), curMap = new Map(cur.map(r => [r.key, r]));
     const count = rows => ({ total: rows.length, populated: rows.filter(r => r.state === 'Populated').length, na: rows.filter(r => r.state === 'N/A').length, blank: rows.filter(r => r.state === 'Blank').length });
@@ -1310,7 +1354,7 @@
       lines.push(['Status', 'Source', 'Field', 'Value', 'Source page', 'Review target', 'Found in', 'Notes', 'Review', 'Issue note', 'Issue note document'].map(q).join(','));
       for (const e of state.jb.entries) {
         const issue = state.reviews.get(reviewKey(e)) === 'issue' ? noteDetails(state.reviewNotes.get(reviewKey(e))) : { text: '', document: null };
-        lines.push([JB[e.status].t, e.sourceKind.toUpperCase(), e.label, e.value, e.page, e.targetLabel,
+        lines.push([JB[e.status].t, kindLabel(e.sourceKind), e.label, e.value, e.page, e.targetLabel,
           e.found.map(f => `${state.docs[f.i].short} p.${f.pages.join('/')}`).join('; '),
           jbDetail(e).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&'), state.reviews.get(reviewKey(e)) || '', issue.text, issue.document?.name || ''].map(q).join(','));
       }
@@ -1337,7 +1381,7 @@
     const rows = [row(['Source', 'Field', 'Value', 'Source page', 'Review target', 'Found in', 'Issue note', 'Attached document'])];
     for (const e of state.jb.entries.filter(entry => state.reviews.get(reviewKey(entry)) === 'issue')) {
       const issue = noteDetails(state.reviewNotes.get(reviewKey(e)));
-      rows.push(row([e.sourceKind.toUpperCase(), e.label, e.value, e.page, e.targetLabel,
+      rows.push(row([kindLabel(e.sourceKind), e.label, e.value, e.page, e.targetLabel,
         e.found.map(f => `${state.docs[f.i].short} p.${f.pages.join('/')}`).join('; '), issue.text, issue.document?.name || '']));
     }
     const workbook = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="header"><Font ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Issues"><Table>${rows[0].replace('<Row>', '<Row ss:StyleID="header">')}${rows.slice(1).join('')}</Table></Worksheet></Workbook>`;
@@ -1373,7 +1417,7 @@
     header();
     issues.forEach((entry, index) => {
       const issue = noteDetails(state.reviewNotes.get(reviewKey(entry)));
-      const title = `${index + 1}. ${entry.sourceKind.toUpperCase()} — ${entry.label}`;
+      const title = `${index + 1}. ${kindLabel(entry.sourceKind)} — ${entry.label}`;
       const titleLines = pdf.splitTextToSize(title, right - left - 24);
       const estimate = 42 + titleLines.length * 12 + 80;
       pageBreak(estimate);
