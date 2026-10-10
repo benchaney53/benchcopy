@@ -1,6 +1,6 @@
 JOB BOOK REVIEW — CONTINUATION NOTES
 Last updated: 2026-10-10
-Current local build: v1.3.49
+Current local build: v1.3.64
 
 READ THIS FIRST
 - This is a browser-only Job Book Review tool. PDFs and review progress stay on the user's device; PDFs are never uploaded.
@@ -54,7 +54,7 @@ KEY FILES
 VERSIONING
 - Bump the visible version in index.html for each user-facing change.
 - Update both viewer.js?v=... and script.js?v=... cache-busting URLs to the same version.
-- Current version: v1.3.49.
+- Current version: v1.3.64.
 
 VALIDATION BASELINE
 - Run: node --check tools/job-book-review/script.js
@@ -64,6 +64,78 @@ VALIDATION BASELINE
 - For viewer/persistence/highlight changes, load real PDFs, refresh, reopen a review, and confirm both the source and target PDF render with the expected highlights.
 
 RECENT CHANGE LOG
+2026-10-10 — v1.3.64
+- The matching row's description now sits on its own line under the header pill instead of wrapping beside it.
+- Validated v1.3.63/64 with the real ROMC + SIF + AlleCat Serial Numbers.xlsx: pill states green / amber (different pad, with the row's description) / red; launch card "88 found, 2 on a different pad, 23 not found"; the issues PDF built from one issue contains only that issue (value, review target, source page, found in, attached document, note) with no serial-list text.
+- Updated: index.html, this file.
+
+2026-10-10 — v1.3.63
+- Wrong-pad matches are reported again (user request), still as the single header pill: green "In serial list", amber "In list - different pad" (found, but every matching row's Tower is another pad, e.g. composite coupling serial/VUI listed for Pad T10 while the job is Pad 17), red "Not in serial list". Job pad = number in the file names (Pad_T-017 -> 17) vs. the Excel Tower text ("Alle-Cat - Pad T17 T12" -> 17). Item-number matches are generic parts so they ignore the pad; rows whose Tower names no pad (e.g. "Components in transit") and an unknown job pad count as OK.
+- When a value matches, the Description column of the matching row is shown next to the header pill (also under the chip in the review table and in a "Serial description" CSV column).
+- Review table chip: FOUND / OTHER PAD / NOT FOUND; launch card counts found / on a different pad / not found; CSV "Serial list" column: found / other pad / not found.
+- The issues PDF contains ONLY the issues (user request): the "Serial list" line that earlier versions added to it was removed, so serial-list matches never appear in the PDF.
+- Updated: script.js, index.html, this file.
+
+2026-10-10 — v1.3.62
+- Serial list check SIMPLIFIED (user request): one yes/no per field - is the field's value inside ANY cell of the Excel list? Shown as a small pill in the review header next to the field value ("In serial list" green / "Not in serial list" red, tooltip names the matching column and cell). The separate callout, the tower / pad logic and the partial / other-tower states were removed.
+- Matching: letters and digits only, case-insensitive; a cell that CONTAINS the value counts (numbers are sometimes shortened in the documents); values of exactly 4 characters must equal a whole cell; multi-value fields need every part found. All columns are searched except Weight and Created on. The whole sheet is stored (headers + rows) in IndexedDB key 'serials'. Still only for serial-like ROMC / SIF fields (row label mentions serial / VUI / item / s/n / batch, tool serials excluded).
+- Also: "Serial list" column in the review table (FOUND / NOT FOUND), found / not found counts on the launch card, "Serial list" column (found / not found) in the exported CSV, and a Serial list line for issues in the issues PDF.
+- Updated: script.js, viewer.js, index.html, this file.
+
+2026-10-10 — v1.3.61
+- Serial list check skips tool / instrument serial rows (labels mentioning torque wrench, pump, tool, wrench, tensioner, calibration) because those are equipment, not components, and would always show NOT FOUND (SERIAL_ROW_EXCLUDE in script.js).
+- Updated: script.js, index.html, this file.
+
+2026-10-10 — v1.3.60
+- Serial list matching also accepts shortened numbers: when a value has no exact match, any VUI / Item / Manuf Serial / Equipment cell that CONTAINS it (letters and digits only, case-insensitive; the value must be at least 5 characters and the cell longer) counts as found, reported as "FOUND AS PART OF A LONGER NUMBER" (chip PART OF, CSV value "part of") with the full Excel value shown. If a value appears inside more than 25 cells it is treated as not confirmable. Results are memoised per value/pad.
+- Updated: script.js, index.html, this file.
+
+2026-10-10 — v1.3.59
+- Fixed: the "Export issues to Excel / PDF" buttons only enabled inside run(), so after marking the first Issue in a session they stayed disabled until a reload. updateExportButtons() now also runs on every mark change.
+- Updated: script.js, index.html, this file.
+
+2026-10-10 — v1.3.58
+- Serial number list: optional Excel file (tested with AlleCat Serial Numbers.xlsx - an SAP export of ~15,200 rows with VUI / Item / Tower / Manuf Serial / Description / Equipment / Supplier Name columns). Load it from the "Serial number list" card; it is parsed in the browser (JSZip + DOMParser, first worksheet, header row found by VUI / Manuf Serial) and a compact copy is kept in IndexedDB (session store key 'serials', so it persists like the comparison CSV and survives Clear documents). Replace/Remove buttons on the card.
+- Which fields are checked: ROMC and SIF field items whose ROW label (the part after " \u2013 " in the field label) mentions serial, VUI, item, s/n or batch and whose value looks like an identifier (>= 4 letters/digits incl. a digit; not N/A, blank or unticked). Page reviews and other documents are not checked. Values are normalised (letters/digits only, upper case) and matched exactly against the VUI, Item, Manuf Serial and Equipment columns; multi-value fields are split on commas/semicolons/spaces/slashes and hyphenated pairs are tried as parts.
+- Result per field: FOUND (shows the column, description and tower), OTHER TOWER (found, but only under another pad - the job's pad number comes from the file names, e.g. Pad_T-017 -> 17, compared with the Excel Tower text "... Pad T17 T12"; Item numbers are generic parts so their tower is ignored), PARTIAL (some pieces missing) or NOT FOUND. Shown as a coloured callout under the tip in the review viewer (viewer-check), a "Serial list" column in the review table, a summary on the launch card, a "Serial list" column in the exported CSV, and a "Serial list" line for issues in the issues PDF.
+- Checked against the real data: for Pad T17 the ROMC's VUI/serial values are found under "Alle-Cat - Pad T17 T12"; about a third of identifier-like ROMC values (e.g. newer VUIs such as 000ENYFHHX) are not in the list.
+- Updated: script.js, viewer.js, index.html, this file.
+
+2026-10-10 — v1.3.57
+- ROMC section 1 (Site data) opens the guide's "Sections are filled out correctly" page. Verified with the real ROMC + guide: every ROMC section 1-15 opens the page whose heading names it (71 tower sections, 74 blades, 76 nacelle, 77 wind sensors, 80 rescue, 81 gearbox/generator/crane/CMS, 83 coupling/bearing/hub, 84 controller/UPS/lights, 85 switchgear..service lift, 87 bolts, 89 CoolerTop/aviation, 90 fire suppression).
+- Updated: script.js, index.html, this file.
+
+2026-10-10 — v1.3.56
+- ROMC fields now open the guide page by ROMC section number via ROMC_GUIDE_HEADINGS (section -> a word in a guide page heading, e.g. 2.x tower sections, 3.x blades, 4.6 rescue, 4.7-4.10 gearbox, 5 hub -> composite coupling page, 6-8 tower controller/UPS/light, 9-10 switchgear, 11 bolts incl. blade studs, 12-13 CoolerTop/aviation, 15 fire suppression); the page is found by searching the chapter's page headings, not by page number. Sections not in the table (e.g. 1 Site data) use the form-order fallback. SIF fields keep the section-title text match + form-order fallback. If the ROMC template or the guide's headings change, update ROMC_GUIDE_HEADINGS in script.js.
+- Updated: script.js, index.html, this file.
+
+2026-10-10 — v1.3.55
+- Guide field matching no longer considers the chapter's title page (it is generic and attracted long sections such as SIF 3.16); those fields use the form-order fallback instead.
+- Checked with the real Job Book Inspection Guide_V01.pdf + SIF + Generator Alignment + Bolt Certificates: Generator Alignment -> guide p26, Bolt Certificates -> p11, SIF items stay inside the SIF chapter (p100-116) and advance with the form (e.g. 3.20-3.22 -> p110, 3.23-3.27 -> p111, 3.28 -> p112). The SIF guide pages are annotated screenshots with very little text, so SIF page choice is a best guess; ROMC fields match on the guide's ROMC page headings (Tower Sections, Blades, Rescue / Emergency Descent Equipment, ...).
+- Updated: script.js, index.html, this file.
+
+2026-10-10 — v1.3.54
+- Guide page per field now keys on the field's SECTION (title words + section number, cached per document/section) instead of the row label, so every field in a section opens the same guide page; when a section has no confident text match the field's form page decides (proportional position inside the guide chapter). Row labels such as "Company name" / "Staff initials" matched random guide pages before.
+- Updated: script.js, index.html, this file.
+
+2026-10-10 — v1.3.53
+- Guide matching made robust to pdf.js text splitting (the guide's text comes out as "Check list s", page numbers as "1 1 7"): the Table of Contents parser rejoins trailing digit groups, and chapter / page matching compares text with spaces and punctuation removed, weighting rarer words higher (guideSquash / guideWords in script.js). Before this fix SIF fields mapped to the wrong chapters (Service Lift, Skidmore).
+- Updated: script.js, index.html, this file.
+
+2026-10-10 — v1.3.52
+- Guide pane: the guide page and its label are computed immediately when an item opens (prepareGuide); only the drawing happens in the animation frame, so the label is correct even if the window is in the background.
+- Updated: viewer.js, index.html, this file.
+
+2026-10-10 — v1.3.51
+- Fixed the "isn't in the text of p.N" hint still appearing when there is nothing to highlight (st.hl is a cache key and is never empty; the check now looks at st.hlTerms / st.rect). Title column in the review header has a minimum width and the tip callout shrinks on narrower windows.
+- Updated: viewer.js, index.html, this file.
+
+2026-10-10 — v1.3.50
+- Job Book Guide: an optional reference PDF (tested with Job Book Inspection Guide_V01.pdf, 125 pages). Load it from the "Job Book Guide" card on the main page or from the Guide button in the review header (top right, beside the X; first click asks for the PDF). It opens as a pane at the far LEFT of the review and the choice (open/closed) is remembered (localStorage snc-guide-open). The PDF + extracted text are saved in IndexedDB (session store key 'guide', so Clear documents does not remove it).
+- Which page: chapters come from the guide's own Table of Contents page (title + start page; parsed in guideChapters). The chapter for the current document is the one whose title words best overlap the file name (guideChapterFor). For ROMC / SIF fields the page inside that chapter with the best word match to the field's label/section is used (TF-IDF style, heading words weighted 3x, section-number bonus), falling back to the field's relative position in the form's page order (guidePageFor). Other documents open at their chapter start; unmatched documents open the table of contents.
+- viewer.js: header .viewer-guide button, .pane-guide (leftmost), spec.guide = {doc (getter), page(), pick()} supplied by script.js guideSpec(); the guide pane joins the zoom-key / area-capture pane lists. Not shown for the comparison-summary viewer.
+- Updated: script.js, viewer.js, index.html, this file.
+
 2026-10-10 — v1.3.49
 - The per-step tip is now a larger, high-contrast callout (16 px, bold, accent border and tint, "TIP" label) in the previously empty top-right of the title bar, beside the title and target tabs, instead of a thin strip below the bar. The title bar is a CSS grid (title/targets left, tip right); on narrow screens the tip stacks under the targets.
 - Updated: viewer.js (tip element moved into .viewer-bar), index.html (CSS, version), this file.

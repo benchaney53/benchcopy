@@ -319,7 +319,7 @@
     }
 
     function setMsg(p, n, kept) {
-      if (!st.hl || (Array.isArray(st.hl) && !st.hl.filter(Boolean).length)) { msg.textContent = ''; return; }
+      if (!st.hl || (!st.hlTerms.length && !st.rect)) { msg.textContent = ''; return; }
       const label = highlightLabel();
       if (kept) msg.innerHTML = `Stayed on p.${n} — <code>${esc(label)}</code> isn't in this document's text, so its location is a guess`;
       else if (p && p.rects && p.rects.length) msg.innerHTML = `Highlighted <code>${esc(label)}</code> on p.${n}`;
@@ -549,15 +549,16 @@
       '<div class="viewer-main">' +
       '<div class="viewer-bar">' +
       '<button type="button" class="viewer-close" data-v="close" title="Close (Esc)" aria-label="Close">&times;</button>' +
+      '<button type="button" class="viewer-guide" data-v="guide" hidden title="Open the Job Book Guide beside this item" aria-label="Job Book Guide"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15H5.5A1.5 1.5 0 0 0 4 20.5z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5a1.5 1.5 0 0 1 1.5 1.5z"/></svg><span>Guide</span></button>' +
       '<div class="viewer-title"></div>' +
       '<div class="viewer-targets" aria-label="Required review targets"></div>' +
-      '<div class="viewer-tip" role="note" hidden></div>' +
+      '<div class="viewer-callouts"><div class="viewer-tip" role="note" hidden></div></div>' +
       '</div>' +
       '<form class="viewer-note" hidden><label><strong>Issue note <span class="src">(optional &middot; one per item)</span></strong><textarea placeholder="Describe what is wrong or what needs follow-up…" aria-label="Issue note"></textarea></label><label><strong>Attach to document</strong><select aria-label="Attach issue note to document"></select></label><button type="button" class="btn btn-small" data-v="capture" title="Click, then drag over a PDF to attach a picture of that area to this note">&#9986; Attach area</button><span class="note-error">Saved automatically</span><div class="note-images"></div></form>' +
-      '<div class="viewer-panes"><div class="pane"></div><div class="pane"></div><div class="pane"></div><div class="pane"></div></div>' +
+      '<div class="viewer-panes"><div class="pane pane-guide" hidden></div><div class="pane"></div><div class="pane"></div><div class="pane"></div><div class="pane"></div></div>' +
       '</div></div>';
     document.body.appendChild(root);
-    const paneEls = [...root.querySelectorAll('.pane')];
+    const paneEls = [...root.querySelectorAll('.pane:not(.pane-guide)')];
     const panes = paneEls.map(el => Pane(el, getDocs));
     // Every pane after the first shows one required review target; a small label says which.
     paneEls.slice(1).forEach(el => el.insertAdjacentHTML('afterbegin', '<div class="pane-target-label" hidden></div>'));
@@ -566,6 +567,60 @@
     let hoverPane = -1;
     paneEls.forEach((el, i) => el.addEventListener('pointerenter', () => { hoverPane = i; }));
     root.addEventListener('pointerleave', () => { hoverPane = -1; });
+    // ---- Job Book Guide pane (leftmost; opened from the header button) ----
+    const elG = root.querySelector('.pane-guide'), guideBtn = root.querySelector('[data-v="guide"]'), barEl = root.querySelector('.viewer-bar');
+    let guidePane = null, guideBlob = null, guideDocRef = null, guideOpen = false, guideHoverBound = false;
+    try { guideOpen = localStorage.getItem('snc-guide-open') === '1'; } catch (e) { /* ignore */ }
+    function ensureGuidePane(gdoc) {
+      guideDocRef = gdoc;
+      if (guidePane && guideBlob === gdoc.blob) return;
+      if (guidePane) {
+        guidePane.stopCapture();
+        const k = panes.indexOf(guidePane);
+        if (k >= 0) { panes.splice(k, 1); paneEls.splice(k, 1); }
+      }
+      elG.innerHTML = '';
+      guidePane = Pane(elG, () => [guideDocRef]);
+      elG.insertAdjacentHTML('afterbegin', '<div class="pane-target-label guide-label">Job Book Guide</div>');
+      guideBlob = gdoc.blob;
+      panes.push(guidePane); paneEls.push(elG);
+      if (!guideHoverBound) { guideHoverBound = true; elG.addEventListener('pointerenter', () => { hoverPane = paneEls.indexOf(elG); }); }
+    }
+    function guideVisible(spec) { return !!(spec && spec.guide && spec.guide.doc && guideOpen); }
+    // Header button + pane visibility + panel count; returns whether the guide pane is showing.
+    function applyGuideChrome(spec, targetCount) {
+      const has = !!(spec && spec.guide), vis = guideVisible(spec);
+      guideBtn.hidden = !has;
+      barEl.classList.toggle('has-guide', has);
+      guideBtn.classList.toggle('active', vis);
+      elG.hidden = !vis;
+      root.dataset.panes = String(1 + targetCount + (vis ? 1 : 0));
+      root.classList.toggle('split', targetCount > 0 || vis);
+      return vis;
+    }
+    // Work out the guide page and label straight away (cheap); drawing happens later in an animation frame.
+    function prepareGuide(spec) {
+      const gdoc = spec.guide && spec.guide.doc;
+      if (!gdoc) return;
+      ensureGuidePane(gdoc);
+      spec.__guidePage = spec.guide.page();
+      elG.querySelector('.guide-label').textContent = `Job Book Guide \u2014 page ${spec.__guidePage}`;
+    }
+    function showGuidePage(spec) {
+      if (!spec.guide || !spec.guide.doc || !guidePane) return;
+      guidePane.show({ doc: 0, page: spec.__guidePage || spec.guide.page(), hl: [], fit: 'width', sure: true });
+    }
+    function refreshGuideLayout() {
+      if (!current) return;
+      const shown = current.__shown || [];
+      const vis = applyGuideChrome(current, shown.length);
+      if (vis) prepareGuide(current);
+      requestAnimationFrame(() => {
+        paneA.show({ ...current.left, fit: shown.length || vis ? 'width' : 'height' });
+        shown.forEach((item, i) => targetPanes[i].show({ ...item.right, fit: 'width' }));
+        if (vis) showGuidePage(current);
+      });
+    }
     function zoomKey(action) {
       const targets = hoverPane >= 0 && !paneEls[hoverPane].hidden ? [panes[hoverPane]] : panes.filter((p, i) => !paneEls[i].hidden);
       targets.forEach(p => p[action]());
@@ -670,6 +725,15 @@
       const v = b.dataset.v;
       if (v === 'close') close();
       else if (v === 'doc' && current && current.docNav) { const items = current.docNav(); if (items[+b.dataset.i]) items[+b.dataset.i].onSelect(); }
+      else if (v === 'guide' && current && current.guide) {
+        const toggleGuide = () => {
+          guideOpen = !guideOpen;
+          try { localStorage.setItem('snc-guide-open', guideOpen ? '1' : '0'); } catch (err) { /* ignore */ }
+          refreshGuideLayout();
+        };
+        if (!current.guide.doc) Promise.resolve(current.guide.pick()).then(ok => { if (ok) { guideOpen = false; toggleGuide(); } });
+        else toggleGuide();
+      }
       else if (v === 'capture') { if (capturing) cancelCapture(); else startCaptureMode(); }
       else if (v === 'rm-image' && current && current.mark) { current.mark.images.splice(+b.dataset.i, 1); renderNoteImages(); commitNote(); }
       else if ((v === 'prev' || v === 'next') && current && current.step) onStep(current.step.index + (v === 'next' ? 1 : -1));
@@ -737,7 +801,7 @@
     window.addEventListener('resize', () => {
       if (root.hidden) return;
       clearTimeout(rt);
-      rt = setTimeout(() => { paneA.relayout(); targetPanes.forEach((p, i) => { if (!targetEls[i].hidden) p.relayout(); }); }, 200);
+      rt = setTimeout(() => { paneA.relayout(); targetPanes.forEach((p, i) => { if (!targetEls[i].hidden) p.relayout(); }); if (guidePane && !elG.hidden) guidePane.relayout(); }, 200);
     });
 
     return {
@@ -778,15 +842,17 @@
           }
           el.classList.toggle('active-target', !!item && item.index === spec.targetIndex && shown.length > 1);
         });
-        root.classList.toggle('split', shown.length > 0);
-        root.dataset.panes = String(1 + shown.length);
+        spec.__shown = shown;
+        const guideShown = applyGuideChrome(spec, shown.length);
+        if (guideShown) prepareGuide(spec);
         root.hidden = false;
         document.body.classList.add('snc-viewer-open');
         root.querySelector('[data-v="close"]').focus();
         // Panes size themselves to their width, so render after layout.
         requestAnimationFrame(() => {
-          paneA.show({ ...spec.left, fit: shown.length ? 'width' : 'height' });
+          paneA.show({ ...spec.left, fit: shown.length || guideShown ? 'width' : 'height' });
           shown.forEach((item, i) => targetPanes[i].show({ ...item.right, fit: 'width' }));
+          if (guideShown) showGuidePage(spec);
         });
       },
       close,

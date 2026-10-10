@@ -15,7 +15,7 @@
 
   // docs: { name, short, numPages, pages:[{text, norm, hasText}], fieldList:[{name,value,page,label,section}],
   //         fields:{name:Set}, text, error }
-  const state = { docs: [], refIdx: -1, refAuto: true, mode: 'jobbook', rowsB: [], jb: null, jbRows: [], reviews: new Map(), reviewNotes: new Map(), reviewsFor: '', reviewPosition: null, reviewScope: 'all', ignoredDocTypes: [], baseline: null, skip: { dates: true, initials: false, names: false, company: false, version: false, yesno: false, blanks: false } };
+  const state = { docs: [], refIdx: -1, refAuto: true, mode: 'jobbook', rowsB: [], jb: null, jbRows: [], reviews: new Map(), reviewNotes: new Map(), reviewsFor: '', reviewPosition: null, reviewScope: 'all', ignoredDocTypes: [], baseline: null, guide: null, serials: null, skip: { dates: true, initials: false, names: false, company: false, version: false, yesno: false, blanks: false } };
 
   // Keep the original PDF blobs, as well as their extracted text, in IndexedDB.
   // localStorage is deliberately not used here: a normal job book can be far too
@@ -623,6 +623,389 @@
     }
   }
   function viewerDocuments() { return state.docs.map((doc, index) => ({ id: doc.id, name: doc.name, index })); }
+  // =====================================================================
+  // Serial number list (Excel): is a serial / VUI / item number field's value found in the list?
+  // =====================================================================
+  // Numeric columns that are not identifiers are left out of the search.
+  const SERIAL_SKIP_COLUMNS = /^(weight|created\s*on)$/i;
+
+  async function parseSerialWorkbook(file) {
+    if (typeof JSZip === 'undefined') throw new Error('ZIP support failed to load, so Excel files cannot be read.');
+    const zip = await JSZip.loadAsync(file);
+    const xml = async name => { const f = zip.file(name); return f ? new DOMParser().parseFromString(await f.async('string'), 'application/xml') : null; };
+    const workbook = await xml('xl/workbook.xml'), rels = await xml('xl/_rels/workbook.xml.rels');
+    if (!workbook || !rels) throw new Error('This does not look like an .xlsx workbook.');
+    const sheet = workbook.getElementsByTagName('sheet')[0];
+    const rid = sheet && (sheet.getAttribute('r:id') || sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id'));
+    const rel = [...rels.getElementsByTagName('Relationship')].find(r => r.getAttribute('Id') === rid);
+    if (!rel) throw new Error('Could not find the first worksheet.');
+    const sharedDoc = await xml('xl/sharedStrings.xml');
+    const shared = sharedDoc ? [...sharedDoc.getElementsByTagName('si')].map(si => [...si.getElementsByTagName('t')].map(t => t.textContent).join('')) : [];
+    const sheetDoc = await xml('xl/' + rel.getAttribute('Target').replace(/^\/?(?:xl\/)?/, ''));
+    if (!sheetDoc) throw new Error('Could not read the worksheet.');
+    const colIndex = ref => { let n = 0; for (const ch of ref.replace(/[^A-Za-z]/g, '').toUpperCase()) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
+    const table = [];
+    for (const row of sheetDoc.getElementsByTagName('row')) {
+      const cells = [];
+      for (const c of row.getElementsByTagName('c')) {
+        const v = c.getElementsByTagName('v')[0], type = c.getAttribute('t');
+        let text = '';
+        if (type === 's' && v) text = shared[+v.textContent] || '';
+        else if (type === 'inlineStr') text = [...c.getElementsByTagName('t')].map(t => t.textContent).join('');
+        else if (v) text = v.textContent;
+        cells[colIndex(c.getAttribute('r'))] = String(text).trim().replace(/^(\d+)\.0+$/, '$1');
+      }
+      table.push(cells);
+    }
+    // The header row is the first row that names a VUI / serial column.
+    const headerAt = table.slice(0, 15).findIndex(cells => cells.some(c => /^(vui|manuf.*serial|serial.*)$/i.test(c || '')));
+    if (headerAt < 0) throw new Error('Could not find a header row with a VUI or serial number column.');
+    const width = Math.max(...table.slice(headerAt, headerAt + 50).map(r => r.length));
+    const headers = Array.from({ length: width }, (_, i) => String(table[headerAt][i] || '').trim());
+    const rows = [];
+    for (const cells of table.slice(headerAt + 1)) {
+      const row = Array.from({ length: width }, (_, i) => cells[i] || '');
+      if (row.some(Boolean)) rows.push(row);
+    }
+    return { headers, rows };
+  }
+  // Every searchable cell as [normalised text, row, column] (letters and digits only, upper case).
+  function serialKeys() {
+    const list = state.serials;
+    if (!list) return null;
+    if (list.keys) return list.keys;
+    const skip = list.headers.map(h => SERIAL_SKIP_COLUMNS.test(h));
+    const keys = [];
+    list.rows.forEach((row, r) => row.forEach((cell, c) => {
+      if (!cell || skip[c]) return;
+      const key = alnum(cell);
+      if (key.length >= 3) keys.push([key, r, c]);
+    }));
+    list.keys = keys;
+    return keys;
+  }
+
+  // Tool / instrument serials (torque wrench, pump, tension tool ...) are equipment, not components, so they are not in a component list.
+  const SERIAL_ROW_EXCLUDE = /torque\s*wrench|\bpump\b|\btool\b|\bwrench\b|tensioner|calibrat/i;
+  const SERIAL_ROW_LABEL = /serial|\bvui\b|\bitem\b|\bs\/?n\b|\bbatch\b/i;
+  // Pad number of this job (from the file names, e.g. Pad_T-017 -> 17) and of an Excel Tower cell like "Alle-Cat - Pad T17 T12".
+  function jobPadNumber() {
+    for (const d of state.docs) { const m = /pad[\s_-]*t?[\s_-]*0*(\d+)/i.exec(d.name || ''); if (m) return m[1]; }
+    return null;
+  }
+  const towerPadNumber = tower => { const m = /pad\s*t?\s*0*(\d+)/i.exec(tower || ''); return m ? m[1] : null; };
+  const SERIAL_RESULT = {
+    found: { chip: 'FOUND', cls: 'ok' },
+    other: { chip: 'OTHER PAD', cls: 'warn' },
+    missing: { chip: 'NOT FOUND', cls: 'bad' },
+  };
+  // Is the field's value inside ANY cell of the list, and for this job's pad? Numbers are sometimes shortened in the
+  // documents, so a cell that merely contains the value counts (values of 4 characters must match a whole cell).
+  // Item numbers are generic parts, so only VUIs / serials / other cells are compared with the pad. Only serial-like fields are checked.
+  function serialCheckRaw(label, value) {
+    const list = state.serials;
+    if (!list) return null;
+    const rowLabel = String(label || '').split(' – ').pop();
+    const text = String(value || '').trim();
+    if (!SERIAL_ROW_LABEL.test(rowLabel) || SERIAL_ROW_EXCLUDE.test(rowLabel) || !text || isNA(text) || /^\(/.test(text)) return null;
+    const whole = alnum(text);
+    if (whole.length < 4 || !/\d/.test(whole)) return null;
+    const pad = jobPadNumber();
+    const memo = list.memo || (list.memo = new Map()), memoKey = `${text}|${pad}`;
+    if (memo.has(memoKey)) return memo.get(memoKey);
+    const keys = serialKeys();
+    const towerCol = list.headers.findIndex(h => /^tower$/i.test(h)), itemCol = list.headers.findIndex(h => /^item/i.test(h));
+    const search = piece => {
+      const q = alnum(piece);
+      if (q.length < 4 || !/\d/.test(q)) return null;
+      const hits = keys.filter(k => (q.length >= 5 ? k[0].includes(q) : k[0] === q));
+      return hits.length ? hits : null;
+    };
+    // a match is right for this job when it is an item number, its tower names no pad, or the pad is this job's pad
+    const onThisPad = hit => hit[2] === itemCol || !pad || towerCol < 0 || !towerPadNumber(list.rows[hit[1]][towerCol]) || towerPadNumber(list.rows[hit[1]][towerCol]) === pad;
+    let checks = [{ text, hits: search(text) }];
+    if (!checks[0].hits) {
+      // several values in one field (comma / semicolon / space separated), or a hyphenated pair: every part must be found
+      const parts = text.split(/[,;\s/|]+/).filter(p => alnum(p).length >= 4);
+      if (parts.length > 1 || /[-_]/.test(text)) {
+        checks = parts.map(p => {
+          let hits = search(p);
+          if (!hits && /[-_]/.test(p)) {
+            const sub = p.split(/[-_]/).filter(x => alnum(x).length >= 4);
+            if (sub.length > 1) { const found = sub.map(search); if (found.every(Boolean)) hits = found[0]; }
+          }
+          return { text: p, hits };
+        });
+      }
+      if (!checks.length) checks = [{ text, hits: null }];
+    }
+    const missing = checks.filter(c => !c.hits), elsewhere = checks.filter(c => c.hits && !c.hits.some(onThisPad));
+    const status = missing.length ? 'missing' : elsewhere.length ? 'other' : 'found';
+    const describe = hit => `${list.headers[hit[2]] || 'cell'}: “${list.rows[hit[1]][hit[2]]}”`;
+    const pads = c => [...new Set(c.hits.map(h => String(list.rows[h[1]][towerCol] || 'no tower')))].slice(0, 3).join(', ');
+    const detail = status === 'missing' ? `Not found in the serial list: ${missing.map(c => c.text).join(', ')}`
+      : status === 'other' ? `In the serial list, but listed for ${elsewhere.map(pads).join('; ')} — not Pad ${pad}`
+        : `In the serial list — ${checks.slice(0, 3).map(c => describe((c.hits.find(onThisPad) || c.hits[0]))).join('; ')}`;
+    // the Description column of the matching row(s), shown next to the result
+    const descCol = list.headers.findIndex(h => /^description$/i.test(h));
+    const rowDescription = c => { const hit = c.hits && (c.hits.find(onThisPad) || c.hits[0]); return hit && descCol >= 0 ? list.rows[hit[1]][descCol] : ''; };
+    const description = status === 'missing' ? '' : [...new Set(checks.map(rowDescription).filter(Boolean))].slice(0, 2).join(' / ');
+    const result = { status, found: status !== 'missing', ...SERIAL_RESULT[status], text: detail, description };
+    memo.set(memoKey, result);
+    return result;
+  }
+  const serialCheck = entry => (!state.serials || entry.pageReview || (entry.sourceKind !== 'romc' && entry.sourceKind !== 'sif')) ? null : serialCheckRaw(entry.label, entry.value);
+  const serialChip = entry => { const c = serialCheck(entry); return c ? `<span class="chip ${c.cls}" title="${esc(c.text)}">${c.chip}</span>${c.description ? `<div class="src">${esc(c.description)}</div>` : ''}` : ''; };
+  // The small indicator in the review header.
+  const SERIAL_PILL = { found: ['yes', 'In serial list'], other: ['warn', 'In list – different pad'], missing: ['no', 'Not in serial list'] };
+  const serialPill = entry => { const c = serialCheck(entry); return c ? ` <span class="serial-pill ${SERIAL_PILL[c.status][0]}" title="${esc(c.text)}">${SERIAL_PILL[c.status][1]}</span>${c.description ? ` <span class="serial-desc">${esc(c.description)}</span>` : ''}` : ''; };
+  function serialSummary(entries) {
+    if (!state.serials) return null;
+    const counts = { found: 0, other: 0, missing: 0 }, seen = new Set();
+    for (const e of entries) {
+      const key = fieldKey(e);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const c = serialCheck(e);
+      if (c) counts[c.status]++;
+    }
+    return counts;
+  }
+
+  async function saveSerials(list) {
+    const db = await openStore();
+    await transaction(db, STORE_SESSION, 'readwrite', store => store.put({ name: list.name, savedAt: list.savedAt, headers: list.headers, rows: list.rows }, 'serials'));
+  }
+  async function deleteSerials() {
+    const db = await openStore();
+    await transaction(db, STORE_SESSION, 'readwrite', store => store.delete('serials'));
+  }
+  async function restoreSerials() {
+    try {
+      const db = await openStore();
+      const saved = await new Promise((resolve, reject) => {
+        const req = db.transaction(STORE_SESSION).objectStore(STORE_SESSION).get('serials');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      if (saved && Array.isArray(saved.rows)) {
+        if (!Array.isArray(saved.headers)) saved.headers = ['VUI', 'Item', 'Manuf Serial', 'Tower', 'Description', 'Equipment', 'Supplier'];
+        state.serials = saved; renderSerialCard(); run();
+      }
+    } catch (e) { console.warn('Could not restore the serial number list:', e); }
+  }
+  function renderSerialCard() {
+    const name = $('snc-serial-name'), remove = $('snc-serial-remove'), load = $('snc-serial-load');
+    if (!name) return;
+    name.textContent = state.serials ? `${state.serials.name} (${state.serials.rows.length.toLocaleString()} rows)` : 'No serial number list loaded';
+    remove.hidden = !state.serials;
+    load.textContent = state.serials ? 'Replace serial number list' : 'Load serial number list (Excel)';
+  }
+  async function loadSerialFile(file) {
+    showProgress(`Reading the serial number list: ${file.name}`);
+    const { headers, rows } = await parseSerialWorkbook(file);
+    state.serials = { name: file.name, savedAt: new Date().toISOString(), headers, rows };
+    try { await saveSerials(state.serials); } catch (e) { console.warn('Could not save the serial number list for reload:', e); }
+    showProgress('');
+    renderSerialCard();
+    run();
+  }
+  $('snc-serial-load').addEventListener('click', () => $('snc-serial-file').click());
+  $('snc-serial-file').addEventListener('change', async e => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try { await loadSerialFile(file); } catch (err) { showProgress(`Could not read the serial number list: ${err.message || err}`); }
+  });
+  $('snc-serial-remove').addEventListener('click', () => {
+    state.serials = null;
+    renderSerialCard();
+    run();
+    deleteSerials().catch(e => console.warn('Could not remove the saved serial number list:', e));
+  });
+
+  // =====================================================================
+  // Job Book Guide: an optional reference PDF shown beside the review
+  // =====================================================================
+  const GUIDE_STOP = new Set(['the', 'an', 'and', 'or', 'of', 'to', 'for', 'in', 'on', 'at', 'by', 'with', 'from', 'as', 'is', 'are', 'be', 'this', 'that', 'it', 'its', 'pad', 'wtg', 'pdf']);
+  const guideTokens = text => (String(text || '').toLowerCase().match(/[a-z0-9]+/g) || [])
+    .filter(t => (t.length > 1 || /\d/.test(t)) && !GUIDE_STOP.has(t))
+    .map(t => (t.length > 3 && t.endsWith('s') ? t.slice(0, -1) : t));
+
+  // pdf.js can split words and numbers into pieces ("Check list s", "1 1 7"), so matching is done on
+  // text with spaces and punctuation removed, and page numbers are rejoined.
+  const guideSquash = text => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const guideWords = text => guideTokens(text).filter(t => t.length >= 4 && !/^\d+$/.test(t));
+
+  // Chapters come from the guide's own Table of Contents page: "<title> ... <page>".
+  function guideChapters(pages) {
+    const tocIndex = pages.slice(0, 6).findIndex(p => /table\s*of\s*contents/i.test(p.text || ''));
+    if (tocIndex < 0) return { chapters: [], tocPage: 1 };
+    const found = [];
+    let pending = '';
+    for (const raw of String(pages[tocIndex].text).split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || /^table\s*of\s*contents$/i.test(line)) continue;
+      const m = /^(.*?\S)\s+((?:\d{1,3}\s)*\d{1,3})\s*$/.exec(line);
+      if (m) { found.push({ title: m[1].replace(/\s+/g, ' '), start: +m[2].replace(/\s+/g, '') }); pending = ''; continue; }
+      if (/^\d{1,3}$/.test(line)) {
+        if (pending) { found.push({ title: pending, start: +line }); pending = ''; }
+        continue;
+      }
+      pending = line.replace(/\s+/g, ' ');
+    }
+    const chapters = found.filter(c => c.start >= 1 && c.start <= pages.length).sort((a, b) => a.start - b.start);
+    chapters.forEach((c, i) => { c.end = i + 1 < chapters.length ? Math.max(c.start, chapters[i + 1].start - 1) : pages.length; });
+    return { chapters, tocPage: tocIndex + 1 };
+  }
+  function guideIndex(guide) {
+    if (guide.index) return guide.index;
+    const pages = guide.pages.map(p => {
+      const text = String(p.text || '');
+      const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l && !/^\d{1,3}$/.test(l));
+      return { text, squash: guideSquash(text), headSquash: guideSquash(lines.slice(0, 3).join(' ')) };
+    });
+    const dfCache = new Map();
+    const df = t => { if (!dfCache.has(t)) dfCache.set(t, pages.filter(p => p.squash.includes(t)).length); return dfCache.get(t); };
+    const toc = guideChapters(guide.pages);
+    guide.index = {
+      pages, tocPage: toc.tocPage,
+      chapters: toc.chapters.map(c => ({ ...c, squash: guideSquash(c.title) })),
+      idf: t => Math.log(1 + pages.length / (1 + df(t))),
+    };
+    return guide.index;
+  }
+  // The guide chapter that covers a loaded document: the title sharing the most (rarest) words with the file name.
+  function guideChapterFor(guide, doc) {
+    const index = guideIndex(guide);
+    const want = [...new Set(guideWords(String(doc.name || '').replace(/\.pdf$/i, '').replace(/[_()\-]+/g, ' ')))];
+    const titleDf = t => index.chapters.filter(c => c.squash.includes(t)).length;
+    let best = null;
+    for (const chapter of index.chapters) {
+      let score = 0;
+      for (const t of want) if (chapter.squash.includes(t)) score += Math.log(1 + index.chapters.length / titleDf(t));
+      if (score > 0 && (!best || score > best.score)) best = { chapter, score };
+    }
+    return best && best.chapter;
+  }
+  // The ROMC template's section numbers -> a word in the heading of the guide page that explains them
+  // (the page itself is looked up by that heading, so a re-paginated guide still works).
+  const ROMC_GUIDE_HEADINGS = [
+    [/^1$/, 'filledoutcorrectly'], [/^2(\.|$)/, 'towersection'], [/^3(\.|$)/, 'blade'], [/^4\.1$/, 'nacelle'], [/^4\.[23]$/, 'windsensor'], [/^4\.[45]$/, 'windvane'],
+    [/^4\.6$/, 'rescue'], [/^4\.(7|8|9|10)$/, 'gearbox'], [/^4\.(11|12)$/, 'compositecoupling'], [/^5$/, 'compositecoupling'],
+    [/^[678]$/, 'towercontroller'], [/^(9\.\d+|10)$/, 'switchgear'], [/^11(\.|$)/, 'bolts'], [/^1[23](\.|$)/, 'coolertop'],
+    [/^14(\.|$)/, 'icedetection'], [/^15(\.|$)/, 'firesuppression'],
+  ];
+  const romcGuideHeading = section => { const hit = ROMC_GUIDE_HEADINGS.find(([re]) => re.test(String(section || ''))); return hit ? hit[1] : null; };
+  // Guide page for a review item: the document's chapter; for ROMC / SIF fields the page inside that chapter
+  // that best matches the field (words in its label / section), else its place in the form's page order.
+  function guidePageFor(entry) {
+    const guide = state.guide;
+    if (!guide || !guide.pages.length) return 1;
+    const index = guideIndex(guide), doc = state.docs[entry.sourceIdx];
+    const chapter = doc && guideChapterFor(guide, doc);
+    if (!chapter) return index.tocPage;
+    if (entry.sourceKind !== 'romc' && entry.sourceKind !== 'sif') return chapter.start;
+    const lo = chapter.start, hi = chapter.end;
+    if (entry.sourceKind === 'romc' && !entry.pageReview) {
+      const heading = romcGuideHeading(entry.section);
+      if (heading) {
+        for (let p = lo + 1; p <= hi; p++) {
+          const page = index.pages[p - 1];
+          if (page && page.headSquash.includes(heading)) return p;
+        }
+      }
+    }
+    // Fields share the guide page of their section (generic row labels like "Company name" would match
+    // random pages), so the match uses the section title / number; otherwise the form page decides below.
+    const sectionTitle = String(entry.label || '').split(' \u2013 ')[0].replace(/^\d+(?:\.\d+)*\s*/, '');
+    const cacheKey = `${entry.sourceIdx}|${entry.section || ('p' + entry.page)}`;
+    const cache = index.sectionCache || (index.sectionCache = new Map());
+    if (entry.sourceKind === 'sif' && !entry.pageReview && entry.section) {
+      if (!cache.has(cacheKey)) {
+        const query = [...new Set(guideWords(sectionTitle))];
+        const section = new RegExp('(^|[^0-9.])' + String(entry.section).replace(/\./g, '\\.') + '([^0-9]|$)');
+        let best = -1, bestScore = 0;
+        for (let p = lo + 1; p <= hi; p++) { // the chapter's title page is generic, so it is never a field match
+          const page = index.pages[p - 1];
+          if (!page) continue;
+          let score = 0;
+          for (const t of query) score += page.headSquash.includes(t) ? 3 * index.idf(t) : page.squash.includes(t) ? index.idf(t) : 0;
+          if (section.test(page.text)) score += 4;
+          if (score > bestScore) { bestScore = score; best = p; }
+        }
+        cache.set(cacheKey, best > 0 && bestScore >= 3 ? best : 0);
+      }
+      if (cache.get(cacheKey)) return cache.get(cacheKey);
+    }
+    const total = Math.max(2, doc.numPages || 2), span = Math.max(0, hi - lo - 1);
+    const ratio = Math.min(1, Math.max(0, ((entry.page || 1) - 1) / (total - 1)));
+    return Math.min(hi, lo + 1 + Math.round(ratio * span));
+  }
+  async function saveGuide(guide) {
+    const db = await openStore();
+    await transaction(db, STORE_SESSION, 'readwrite', store => store.put({ name: guide.name, blob: guide.blob, numPages: guide.numPages, pages: guide.pages.map(p => ({ text: p.text })) }, 'guide'));
+  }
+  async function deleteGuide() {
+    const db = await openStore();
+    await transaction(db, STORE_SESSION, 'readwrite', store => store.delete('guide'));
+  }
+  async function restoreGuide() {
+    try {
+      const db = await openStore();
+      const saved = await new Promise((resolve, reject) => {
+        const req = db.transaction(STORE_SESSION).objectStore(STORE_SESSION).get('guide');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      if (saved && saved.blob) { state.guide = saved; renderGuideCard(); }
+    } catch (e) { console.warn('Could not restore the Job Book Guide:', e); }
+  }
+  function renderGuideCard() {
+    const name = $('snc-guide-name'), remove = $('snc-guide-remove'), load = $('snc-guide-load');
+    if (!name) return;
+    name.textContent = state.guide ? `${state.guide.name} (${state.guide.numPages} pages)` : 'No guide loaded';
+    remove.hidden = !state.guide;
+    load.textContent = state.guide ? 'Replace Job Book Guide PDF' : 'Load Job Book Guide PDF';
+  }
+  async function loadGuideFile(file) {
+    showProgress(`Reading the Job Book Guide: ${file.name}`);
+    const read = await extract(file, file.name);
+    if (read.error) throw new Error(read.error);
+    state.guide = { name: file.name, blob: file, numPages: read.numPages, pages: read.pages.map(p => ({ text: p.text })) };
+    guideIndex(state.guide);
+    try { await saveGuide(state.guide); } catch (e) { console.warn('Could not save the Job Book Guide for reload:', e); }
+    showProgress('');
+    renderGuideCard();
+  }
+  // Must be called from a click so the browser allows the file chooser.
+  function pickGuide() {
+    return new Promise(resolve => {
+      const input = $('snc-guide-file');
+      input.onchange = async () => {
+        const file = input.files && input.files[0];
+        input.value = '';
+        if (!file) return resolve(false);
+        try { await loadGuideFile(file); resolve(true); } catch (e) { showProgress(`Could not read the guide: ${e.message || e}`); resolve(false); }
+      };
+      input.click();
+    });
+  }
+  const guideSpec = entry => ({
+    get doc() {
+      return state.guide ? { id: 'job-book-guide', name: state.guide.name, short: 'Job Book Guide', blob: state.guide.blob, numPages: state.guide.numPages, pages: [], fieldList: [], fields: {} } : null;
+    },
+    page: () => guidePageFor(entry),
+    pick: pickGuide,
+  });
+  $('snc-guide-load').addEventListener('click', () => { pickGuide(); });
+  $('snc-guide-remove').addEventListener('click', () => {
+    state.guide = null;
+    renderGuideCard();
+    deleteGuide().catch(e => console.warn('Could not remove the saved Job Book Guide:', e));
+  });
+
+
   function compareJobBook() {
     const sources = state.docs.map((d, i) => ({ d, i, kind: ['romc', 'sif'].includes(sourceKind(d)) ? sourceKind(d) : 'document' })).filter(x => !x.d.error);
     if (!sources.length) { state.jb = null; return; }
@@ -741,7 +1124,8 @@
       return { total, complete };
     };
     const allProgress = progress('all'), romcProgress = progress('romc'), sifProgress = progress('sif'), otherProgress = progress('other');
-    launcher.innerHTML = `<section class="review-launcher" aria-label="Start Job Book Review"><div class="review-launcher-copy"><strong>Start Job Book Review</strong><span>Review every required field one at a time, with its source and matching job-book record side by side.</span></div><label class="review-scope-label">Review<select id="snc-review-scope" aria-label="Review scope"><option value="all"${state.reviewScope === 'all' ? ' selected' : ''}>All job book fields</option><option value="romc"${state.reviewScope === 'romc' ? ' selected' : ''}>ROMC fields only</option><option value="sif"${state.reviewScope === 'sif' ? ' selected' : ''}>SIF fields only</option><option value="other"${state.reviewScope === 'other' ? ' selected' : ''}>Other documents (page review)</option></select></label><button type="button" class="btn btn-review-start" data-start-review${allProgress.total ? '' : ' disabled'}>Start / resume review</button><div class="review-skip" role="group" aria-label="Fields to skip"><span>Skip:</span>${[['dates', 'Dates'], ['initials', 'Initials'], ['names', 'Names'], ['company', 'Company'], ['version', 'Version numbers'], ['yesno', 'Yes / No answers'], ['blanks', 'Blank / unticked fields']].map(([k, t]) => `<label><input type="checkbox" data-skip="${k}"${state.skip[k] ? ' checked' : ''}> ${t}</label>`).join('')}</div><div class="review-launcher-progress">All <strong>${allProgress.complete}/${allProgress.total}</strong> &middot; ROMC <strong>${romcProgress.complete}/${romcProgress.total}</strong> &middot; SIF <strong>${sifProgress.complete}/${sifProgress.total}</strong>${otherProgress.total ? ` &middot; Other documents <strong>${otherProgress.complete}/${otherProgress.total}</strong>` : ''}</div></section>`;
+    const serialCounts = serialSummary(jb.entries);
+    launcher.innerHTML = `<section class="review-launcher" aria-label="Start Job Book Review"><div class="review-launcher-copy"><strong>Start Job Book Review</strong><span>Review every required field one at a time, with its source and matching job-book record side by side.</span></div><label class="review-scope-label">Review<select id="snc-review-scope" aria-label="Review scope"><option value="all"${state.reviewScope === 'all' ? ' selected' : ''}>All job book fields</option><option value="romc"${state.reviewScope === 'romc' ? ' selected' : ''}>ROMC fields only</option><option value="sif"${state.reviewScope === 'sif' ? ' selected' : ''}>SIF fields only</option><option value="other"${state.reviewScope === 'other' ? ' selected' : ''}>Other documents (page review)</option></select></label><button type="button" class="btn btn-review-start" data-start-review${allProgress.total ? '' : ' disabled'}>Start / resume review</button><div class="review-skip" role="group" aria-label="Fields to skip"><span>Skip:</span>${[['dates', 'Dates'], ['initials', 'Initials'], ['names', 'Names'], ['company', 'Company'], ['version', 'Version numbers'], ['yesno', 'Yes / No answers'], ['blanks', 'Blank / unticked fields']].map(([k, t]) => `<label><input type="checkbox" data-skip="${k}"${state.skip[k] ? ' checked' : ''}> ${t}</label>`).join('')}</div><div class="review-launcher-progress">All <strong>${allProgress.complete}/${allProgress.total}</strong> &middot; ROMC <strong>${romcProgress.complete}/${romcProgress.total}</strong> &middot; SIF <strong>${sifProgress.complete}/${sifProgress.total}</strong>${otherProgress.total ? ` &middot; Other documents <strong>${otherProgress.complete}/${otherProgress.total}</strong>` : ''}${serialCounts ? ` &middot; Serial list <strong>${serialCounts.found} found</strong>, <strong>${serialCounts.other} on a different pad</strong>, <strong>${serialCounts.missing} not found</strong>` : ''}</div></section>`;
     if (nVer || nIss) sum.innerHTML += `<p class="src">Your review: ${nVer} verified · ${nIss} marked as issue</p>`;
     if (unresolvedLegacy) sum.innerHTML += `<p class="src">${unresolvedLegacy} earlier review mark${unresolvedLegacy === 1 ? '' : 's'} kept for reference because this field now has multiple separate targets.</p>`;
 
@@ -749,8 +1133,8 @@
       .filter(e => !issuesOnly || (['manual', 'mismatch', 'duplicate', 'notfound', 'visual', 'notloaded'].includes(e.status) && state.reviews.get(reviewKey(e)) !== 'verified') || state.reviews.get(reviewKey(e)) === 'issue')
       .sort(reviewTableOrder);
     state.jbRows = rows;
-    let h = '<thead><tr><th>Status</th><th>Source field</th><th>Value</th><th>Review target</th><th>Found in</th><th>Notes</th><th></th></tr></thead><tbody>';
-    if (!rows.length) h += `<tr><td colspan="7" class="none">${issuesOnly ? 'No open reviews. Untick “Issues only” to see every field.' : 'No populated ROMC or SIF fields found.'}</td></tr>`;
+    let h = '<thead><tr><th>Status</th><th>Source field</th><th>Value</th><th>Serial list</th><th>Review target</th><th>Found in</th><th>Notes</th><th></th></tr></thead><tbody>';
+    if (!rows.length) h += `<tr><td colspan="8" class="none">${issuesOnly ? 'No open reviews. Untick “Issues only” to see every field.' : 'No populated ROMC or SIF fields found.'}</td></tr>`;
     rows.forEach((e, k) => {
       const found = e.found.map(f => `<div class="${e.expected.includes(f.i) ? 'exp' : ''}">${esc(state.docs[f.i].short)} <span class="src">${f.pages.slice(0, 4).map(pn => openLink(f.i, pn, e.value, 'p.' + pn)).join(', ')}${f.pages.length > 4 ? '…' : ''}</span></div>`).join('') || '<span class="none">—</span>';
       const mark = state.reviews.get(reviewKey(e));
@@ -759,7 +1143,7 @@
       const badge = mark ? `<div><span class="mark mark-${mark}">${mark === 'verified' ? '✓ Verified' : '⚠ Issue'}</span>${issue.text ? `<div class="src">${esc(issue.text)}${esc(noteLabel(note))}</div>` : issue.document ? `<div class="src">Attached to ${esc(issue.document.name)}</div>` : ''}</div>` : '';
       h += `<tr${mark ? ` class="row-${mark}"` : ''}><td><span class="st st-${JB[e.status].c}">${JB[e.status].t}</span>${badge}</td>` +
         `<td>${esc(kindLabel(e.sourceKind))}: ${esc(e.label)}<div class="src">${openLink(e.sourceIdx, e.page, e.value, `${kindLabel(e.sourceKind)} p.` + e.page)}</div></td>` +
-        `<td><span class="chip ${JB[e.status].c}">${esc(e.value)}</span></td><td>${esc(e.targetLabel)}</td><td>${found}</td><td class="notes">${jbDetail(e)}</td>` +
+        `<td><span class="chip ${JB[e.status].c}">${esc(e.value)}</span></td><td>${serialChip(e)}</td><td>${esc(e.targetLabel)}</td><td>${found}</td><td class="notes">${jbDetail(e)}</td>` +
         `<td><button type="button" class="btn btn-small" data-review="${k}">Review</button></td></tr>`;
     });
     tbl.innerHTML = h + '</tbody>';
@@ -872,14 +1256,18 @@
   // =====================================================================
   // Rendering, loading, events
   // =====================================================================
+  // The issue exports need at least one item marked Issue; refreshed whenever a mark changes, not only on run().
+  function updateExportButtons() {
+    $('snc-issues-csv').disabled = !state.jb || !state.jb.entries.some(e => state.reviews.get(reviewKey(e)) === 'issue');
+    $('snc-issues-pdf').disabled = $('snc-issues-csv').disabled;
+    $('snc-snapshot').disabled = !state.docs.some(d => !d.error);
+  }
   function run() {
     setShortNames();
     autoPickReference();
     compareJobBook();
     renderJobBook();
-    $('snc-issues-csv').disabled = !state.jb || !state.jb.entries.some(e => state.reviews.get(reviewKey(e)) === 'issue');
-    $('snc-issues-pdf').disabled = $('snc-issues-csv').disabled;
-    $('snc-snapshot').disabled = !state.docs.some(d => !d.error);
+    updateExportButtons();
     renderCompare();
   }
 
@@ -1102,7 +1490,7 @@
     const entry = group.targets[targetIndex];
     rememberReviewPosition(entry, scope);
     viewer.open({
-      title: `<strong>${esc(kindLabel(group.entry.sourceKind))}: ${esc(group.entry.label)}</strong> <span class="chip ${JB[entry.status].c}">${esc(group.entry.value)}</span>`,
+      title: `<strong>${esc(kindLabel(group.entry.sourceKind))}: ${esc(group.entry.label)}</strong> <span class="chip ${JB[entry.status].c}">${esc(group.entry.value)}</span>${serialPill(group.entry)}`,
       left: { doc: group.entry.sourceIdx, page: group.entry.page, hl: group.entry.pageReview ? [] : [group.entry.label, group.entry.value], rect: group.entry.rect, sure: true },
       targets: group.targets.map(target => ({
         label: target.targetLabel, right: reviewTarget(target),
@@ -1114,6 +1502,7 @@
       mark: { key: reviewKey(entry), status: state.reviews.get(reviewKey(entry)) || null, note: noteDetails(state.reviewNotes.get(reviewKey(entry))).text, noteDocument: noteDetails(state.reviewNotes.get(reviewKey(entry))).document, images: noteDetails(state.reviewNotes.get(reviewKey(entry))).images },
       step: { index: groupIndex, total: groups.length },
       docNav: () => documentNav(scope, group.entry.sourceIdx),
+      guide: guideSpec(group.entry),
       onTarget: index => openReviewGroup(groupIndex, index, scope),
       onNextUnresolved: () => nextUnresolvedReview(groupIndex, targetIndex, scope),
     });
@@ -1125,8 +1514,9 @@
     const groupIndex = groups.findIndex(group => group.key === fieldKey(e));
     if (groupIndex >= 0) return openReviewGroup(groupIndex, targetIndexFor(groups[groupIndex], reviewKey(e)), 'all');
     viewer.open({
-      title: `<span class="st st-${JB[e.status].c}">${JB[e.status].t}</span> <strong>${esc(kindLabel(e.sourceKind))}: ${esc(e.label)}</strong> <span class="chip ${JB[e.status].c}">${esc(e.value)}</span> <span class="src">→ ${esc(e.targetLabel)}</span>`,
+      title: `<span class="st st-${JB[e.status].c}">${JB[e.status].t}</span> <strong>${esc(kindLabel(e.sourceKind))}: ${esc(e.label)}</strong> <span class="chip ${JB[e.status].c}">${esc(e.value)}</span>${serialPill(e)} <span class="src">→ ${esc(e.targetLabel)}</span>`,
       left: { doc: e.sourceIdx, page: e.page, hl: [e.label, e.value], rect: e.rect, sure: true }, right: reviewTarget(e),
+      guide: guideSpec(e),
       documents: viewerDocuments(),
       tip: reviewTip(e),
       mark: { key: reviewKey(e), status: state.reviews.get(reviewKey(e)) || null, note: noteDetails(state.reviewNotes.get(reviewKey(e))).text, noteDocument: noteDetails(state.reviewNotes.get(reviewKey(e))).document, images: noteDetails(state.reviewNotes.get(reviewKey(e))).images },
@@ -1140,6 +1530,7 @@
         if (note || noteDocument || (images && images.length)) state.reviewNotes.set(key, { text: note || '', document: noteDocument || null, images: images || [] }); else state.reviewNotes.delete(key);
       } else if (!preserveNote) state.reviewNotes.delete(key);
       saveReviews();
+      updateExportButtons();
       saveSession().catch(e => console.warn('Could not save review progress:', e));
       renderJobBook(true); // same rows while the viewer is open, so "Next item" stays predictable
     },
@@ -1184,7 +1575,7 @@
   // =====================================================================
   // Job book answers snapshot (CSV export) and comparison with a previous job book
   // =====================================================================
-  const SNAP_HEADER = ['Source', 'Section', 'Field name', 'Label', 'Value', 'State', 'Page', 'Category', 'Review', 'Issue note', 'Document'];
+  const SNAP_HEADER = ['Source', 'Section', 'Field name', 'Label', 'Value', 'State', 'Page', 'Category', 'Review', 'Issue note', 'Document', 'Serial list', 'Serial description'];
   const csvCell = s => `"${String(s == null ? '' : s).replace(/"/g, '""')}"`;
   // Category lets the comparison ignore fields that are expected to change (dates always).
   function fieldCategory(field, value) {
@@ -1220,6 +1611,8 @@
           state: blank ? 'Blank' : isNA(value) ? 'N/A' : 'Populated', page: f.page, category: fieldCategory(f, value),
           review: r ? (r.marks.includes('issue') ? 'issue' : r.marks.every(x => x === 'verified') ? 'verified' : 'pending') : '',
           note: r ? r.notes.join(' | ') : '', document: d.name, docIndex, rect: f.rect,
+          serialDescription: ((kind === 'romc' || kind === 'sif') && !blank ? (serialCheckRaw(f.label, value) || {}).description : '') || '',
+          serial: (kind === 'romc' || kind === 'sif') && !blank ? ((c => (c ? c.chip.toLowerCase() : ''))(serialCheckRaw(f.label, value))) : '',
         });
       };
       d.fieldList.forEach(f => add(f, String(f.value || '').trim(), false));
@@ -1354,7 +1747,7 @@
     const rows = snapshotRows();
     if (!rows.length) return;
     const lines = [SNAP_HEADER.map(csvCell).join(',')].concat(rows.map(r =>
-      [r.source, r.section, r.name, r.label, r.value, r.state, r.page, r.category, r.review, r.note, r.document].map(csvCell).join(',')));
+      [r.source, r.section, r.name, r.label, r.value, r.state, r.page, r.category, r.review, r.note, r.document, r.serial, r.serialDescription].map(csvCell).join(',')));
     const wtg = (state.docs.map(d => /wtg[_\s-]*(\d{4,})/i.exec(d.name)).find(Boolean) || [])[1];
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));
@@ -1448,6 +1841,10 @@
   });
 
   loadBaseline();
+  renderGuideCard();
   run();
+  renderSerialCard();
   restoreDocuments();
+  restoreGuide();
+  restoreSerials();
 })();

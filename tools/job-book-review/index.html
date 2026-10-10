@@ -217,12 +217,29 @@
         .doc-nav.complete .doc-nav-count { color: var(--ok); }
         .doc-nav-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
         .doc-nav-count { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+        .viewer-guide { position: absolute; top: 8px; right: 52px; z-index: 5; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--fg); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .viewer-guide[hidden] { display: none; }
+        .viewer-guide:hover, .viewer-guide:focus-visible { border-color: var(--accent); outline: none; }
+        .viewer-guide.active { background: var(--accent); border-color: var(--accent); color: #0b1b33; }
+        .viewer-bar.has-guide { padding-right: 150px; }
+        .pane-guide { background: var(--inset); }
+        .pane-target-label.guide-label { color: var(--accent); border-bottom-color: var(--accent); }
+        .guide-card { display: grid; gap: 8px; margin: 0 0 20px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+        .guide-card > strong { color: var(--heading); }
         .viewer-close { position: absolute; top: 8px; right: 10px; z-index: 5; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--fg); font-size: 24px; line-height: 1; cursor: pointer; }
         .viewer-close:hover, .viewer-close:focus-visible { border-color: #b02a37; color: #fff; background: #b02a37; outline: none; }
-        .viewer-bar { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title tip" "targets tip"; align-items: start; gap: 8px 18px; padding: 10px 56px 10px 14px; border-bottom: 1px solid var(--line); }
+        .viewer-bar { position: relative; display: grid; grid-template-columns: minmax(200px, 1fr) auto; grid-template-areas: "title tip" "targets tip"; align-items: start; gap: 8px 18px; padding: 10px 56px 10px 14px; border-bottom: 1px solid var(--line); }
+        .serial-pill { display: inline-block; margin-left: 4px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; line-height: 1.5; vertical-align: middle; color: #fff; white-space: nowrap; }
+        .serial-pill.yes { background: #2e7d32; }
+        .serial-pill.no { background: #b02a37; }
+        .serial-pill.warn { background: #b26a00; }
+        .serial-desc { display: block; margin: 3px 0 0; font-size: 13px; font-weight: 600; line-height: 1.3; color: var(--fg); }
         .viewer-title { grid-area: title; min-width: 0; color: var(--heading); font-size: 15px; }
         .viewer-targets { grid-area: targets; display: flex; flex-wrap: wrap; gap: 6px; }
-        .viewer-tip { grid-area: tip; align-self: stretch; max-width: min(46vw, 480px); min-width: 220px; padding: 10px 14px; border: 1px solid var(--accent); border-left-width: 5px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 16%, var(--panel)); color: var(--heading); font-size: 16px; font-weight: 600; line-height: 1.4; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25); }
+        .viewer-tip { padding: 10px 14px; border: 1px solid var(--accent); border-left-width: 5px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 16%, var(--panel)); color: var(--heading); font-size: 16px; font-weight: 600; line-height: 1.4; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25); }
+        @media (max-width: 1100px) { .viewer-tip { font-size: 14px; } .viewer-callouts { max-width: min(40vw, 380px); min-width: 180px; } }
+        .viewer-callouts { grid-area: tip; align-self: stretch; display: flex; flex-direction: column; gap: 8px; max-width: min(46vw, 480px); min-width: 220px; }
+        .viewer-callouts [hidden] { display: none; }
         .viewer-tip::before { content: 'TIP'; display: block; margin-bottom: 3px; font-size: 11px; font-weight: 800; letter-spacing: .12em; color: var(--accent); }
         .viewer-tip strong { color: var(--heading); }
         .target-tab { border: 1px solid var(--line); color: var(--fg); background: var(--inset); border-radius: 6px; padding: 5px 8px; cursor: pointer; font-size: 12px; }
@@ -278,7 +295,7 @@
             .snc-viewer { padding: 0; }
             .viewer-box { border-radius: 0; flex-direction: column; }
             .viewer-bar { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "targets" "tip"; }
-            .viewer-tip { max-width: none; min-width: 0; }
+            .viewer-callouts { max-width: none; min-width: 0; }
             .viewer-rail { flex-direction: column; max-height: 42vh; border-right: none; border-bottom: 1px solid var(--line); }
             .viewer-actions { width: auto; flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--line); overflow: visible; }
             .viewer-step, .viewer-mark { flex-direction: row; }
@@ -348,6 +365,26 @@ Hub serial | hub[^\n]{0,40}?(?:serial\s*(?:no\.?|number|#)|s\/n)\s*[:#.]?\s*((?=
 
         -->
         <div id="snc-review-launcher"></div>
+        <section class="guide-card" aria-label="Job Book Guide">
+            <strong>Job Book Guide</strong>
+            <span class="hint">Optional reference PDF. During a review, the Guide button in the header opens it beside the item, at the chapter for the document being reviewed and, for ROMC and SIF fields, the matching page.</span>
+            <div class="compare-actions">
+                <button type="button" class="btn btn-small" id="snc-guide-load">Load Job Book Guide PDF</button>
+                <input type="file" id="snc-guide-file" accept="application/pdf,.pdf">
+                <span id="snc-guide-name" class="hint"></span>
+                <button type="button" class="btn btn-small" id="snc-guide-remove" hidden>Remove</button>
+            </div>
+        </section>
+        <section class="guide-card serial-card" aria-label="Serial number list">
+            <strong>Serial number list</strong>
+            <span class="hint">Optional Excel export of serial numbers (columns such as VUI, Item, Manuf Serial, Tower). Serial number, VUI and item number fields are checked against it: the review header shows whether any cell in the list contains the field's value (a cell that contains a shortened number counts), the matching row's description, and whether it is listed for this job's pad, and the review table and exports include the result. The list is kept in this browser until you replace or remove it.</span>
+            <div class="compare-actions">
+                <button type="button" class="btn btn-small" id="snc-serial-load">Load serial number list (Excel)</button>
+                <input type="file" id="snc-serial-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+                <span id="snc-serial-name" class="hint"></span>
+                <button type="button" class="btn btn-small" id="snc-serial-remove" hidden>Remove</button>
+            </div>
+        </section>
         <section class="compare-card" aria-label="Compare with a previous job book">
             <strong>Compare with a previous job book</strong>
             <span class="hint">Export the answers CSV from a finished job book, then upload it here to see what changed in this one: N/A counts, blank fields and different answers. Dates are ignored.</span>
@@ -369,13 +406,13 @@ Hub serial | hub[^\n]{0,40}?(?:serial\s*(?:no\.?|number|#)|s\/n)\s*[:#.]?\s*((?=
             </details>
         </div>
     </div>
-    <div class="version-tag">Job Book Review v1.3.49</div>
+    <div class="version-tag">Job Book Review v1.3.64</div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="viewer.js?v=1.3.49"></script>
-    <script src="script.js?v=1.3.49"></script>
+    <script src="viewer.js?v=1.3.64"></script>
+    <script src="script.js?v=1.3.64"></script>
     <script>
         // Theme toggle (shared bench convention: localStorage 'theme', dark default)
         (function () {
