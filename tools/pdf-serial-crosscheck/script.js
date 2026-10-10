@@ -101,7 +101,7 @@
       // Older saved sessions predate form-field rectangles. Re-extract only those
       // PDFs once, so future reviews can point to the actual source field instead
       // of guessing from a repeated label or value.
-      const missingLocations = state.docs.filter(d => d.fieldList && (!Array.isArray(d.blankFields) || d.fieldList.some(f => !Array.isArray(f.rect))));
+      const missingLocations = state.docs.filter(d => d.fieldList && (!Array.isArray(d.blankFields) || d.blankFields.some(f => !Array.isArray(f.rect)) || d.fieldList.some(f => !Array.isArray(f.rect))));
       if (missingLocations.length) {
         await Promise.all(missingLocations.map(async oldDoc => {
           try {
@@ -317,7 +317,7 @@
         }
         const secLabel = sec ? `${sec.num} ${sec.title}` : '';
         const label = [secLabel, w.row].filter(Boolean).join(' – ') || w.name;
-          if (w.blank) { doc.blankFields.push({ name: w.name, page: w.page, label, section: sec ? sec.num : '' }); continue; }
+          if (w.blank) { doc.blankFields.push({ name: w.name, page: w.page, label, section: sec ? sec.num : '', rect: w.rect }); continue; }
           doc.fieldList.push({ name: w.name, value: w.value, page: w.page, label, section: sec ? sec.num : '', rect: w.rect });
         (doc.fields[w.name] ||= new Set()).add(w.value);
       }
@@ -1147,7 +1147,7 @@
       byField.set(fieldKey(e), cur);
     }
     const rows = [];
-    for (const d of state.docs) {
+    for (const [docIndex, d] of state.docs.entries()) {
       const kind = sourceKind(d);
       if (!kind || d.error) continue;
       const seen = new Map();
@@ -1159,7 +1159,7 @@
           key: `${base}#${n}`, source: kind.toUpperCase(), section: f.section || '', name: f.name, label: f.label || '', value,
           state: blank ? 'Blank' : isNA(value) ? 'N/A' : 'Populated', page: f.page, category: fieldCategory(f, value),
           review: r ? (r.marks.includes('issue') ? 'issue' : r.marks.every(x => x === 'verified') ? 'verified' : 'pending') : '',
-          note: r ? r.notes.join(' | ') : '', document: d.name,
+          note: r ? r.notes.join(' | ') : '', document: d.name, docIndex, rect: f.rect,
         });
       };
       d.fieldList.forEach(f => add(f, String(f.value || '').trim(), false));
@@ -1239,25 +1239,46 @@
     const c = compareSnapshots(b.rows, cur);
     const delta = (a, z) => { const d = z - a; return d === 0 ? '0' : (d > 0 ? '+' : '') + d; };
     const metric = (label, key) => `<tr><td>${label}</td><td>${c.prev[key]}</td><td>${c.cur[key]}</td><td>${delta(c.prev[key], c.cur[key])}</td></tr>`;
-    const list = (title, items, fmt) => {
+    state.cmpLists = {};
+    const list = (key, title, items, fmt) => {
+      state.cmpLists[key] = { title, items, fmt };
       if (!items.length) return `<div class="cmp-line cmp-zero">${title}: <strong>0</strong></div>`;
       const shown = items.slice(0, 300);
-      return `<details class="cmp-line"><summary>${title}: <strong>${items.length}</strong></summary><ul>${shown.map(i => `<li>${fmt(i)}</li>`).join('')}${items.length > shown.length ? `<li class="src">…and ${items.length - shown.length} more</li>` : ''}</ul></details>`;
+      return `<details class="cmp-line"><summary>${title}: <strong>${items.length}</strong></summary><ul>${shown.map((i, n) => `<li>${i.r ? `<button type="button" class="cmp-open" data-cmp-list="${key}" data-cmp-i="${n}" title="Open in the viewer">${fmt(i)}</button>` : fmt(i)}</li>`).join('')}${items.length > shown.length ? `<li class="src">…and ${items.length - shown.length} more</li>` : ''}</ul></details>`;
     };
     const lbl = r => `<strong>${esc(r.source)}</strong> ${esc(r.label || r.name)}`;
     const val = r => r.state === 'Populated' ? `“${esc(r.value)}”` : r.state;
     const move = i => `${lbl(i.r)}: ${val(i.p)} → ${val(i.r)}`;
     const d = c.diffs;
     box.innerHTML = `<table class="cmp-table"><thead><tr><th></th><th>Previous</th><th>Current</th><th>Change</th></tr></thead><tbody>${metric('Fields', 'total')}${metric('Populated', 'populated')}${metric('N/A', 'na')}${metric('Blank', 'blank')}</tbody></table>` +
-      list('Blank now, was filled or N/A', d.blankNow, move) +
-      list('Filled now, was blank', d.filledNow, move) +
-      list('N/A now, was filled', d.naNow, move) +
-      list('Filled now, was N/A', d.valueNow, move) +
-      list('Different value', d.changed, move) +
-      list('Only in this job book', d.onlyCurrent, i => lbl(i.r)) +
-      list('Only in the comparison CSV', d.onlyPrevious, i => lbl(i.p)) +
-      '<p class="src">Date fields are ignored. Initials, names, company and Yes/No answers follow the Skip toggles above for the “Different value” list.</p>';
+      list('blankNow', 'Blank now, was filled or N/A', d.blankNow, move) +
+      list('filledNow', 'Filled now, was blank', d.filledNow, move) +
+      list('naNow', 'N/A now, was filled', d.naNow, move) +
+      list('valueNow', 'Filled now, was N/A', d.valueNow, move) +
+      list('changed', 'Different value', d.changed, move) +
+      list('onlyCurrent', 'Only in this job book', d.onlyCurrent, i => lbl(i.r)) +
+      list('onlyPrevious', 'Only in the comparison CSV', d.onlyPrevious, i => lbl(i.p)) +
+      '<p class="src">Click a change to open it in the viewer; use the arrows to step through that list. Date fields are ignored. Initials, names, company and Yes/No answers follow the Skip toggles above for the “Different value” list.</p>';
   }
+  // Open one change from the comparison summary in the viewer (view only, no marks).
+  function openCompareItem(key, index) {
+    const group = state.cmpLists && state.cmpLists[key];
+    const item = group && group.items[index];
+    if (!item || !item.r) return;
+    const r = item.r, p = item.p;
+    const val = x => x.state === 'Populated' ? `\u201c${x.value}\u201d` : x.state;
+    viewer.open({
+      title: `<strong>${esc(r.source)}: ${esc(r.label || r.name)}</strong> <span class="src">${esc(group.title)}</span>`,
+      left: { doc: r.docIndex, page: r.page, hl: [r.label, r.value].filter(Boolean), rect: r.rect, sure: Array.isArray(r.rect) },
+      tip: p ? `Previous job book: ${val(p)}  \u2192  This job book: ${val(r)} (page ${r.page}).` : `Not in the previous job book (page ${r.page}).`,
+      step: { index, total: group.items.length },
+      onStep: k => openCompareItem(key, k),
+    });
+  }
+  $('snc-compare-summary').addEventListener('click', e => {
+    const btn = e.target.closest('[data-cmp-list]');
+    if (btn) openCompareItem(btn.dataset.cmpList, +btn.dataset.cmpI);
+  });
   $('snc-compare-file').addEventListener('change', async e => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';

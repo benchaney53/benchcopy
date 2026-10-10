@@ -1,6 +1,6 @@
 JOB BOOK REVIEW (folder: pdf-serial-crosscheck) — CONTINUATION NOTES
 Last updated: 2026-10-10
-Current local build: v1.3.31
+Current local build: v1.3.33
 
 READ THIS FIRST
 - This is a browser-only Job Book Review tool. PDFs and review progress stay on the user's device; PDFs are never uploaded.
@@ -53,7 +53,7 @@ KEY FILES
 VERSIONING
 - Bump the visible version in index.html for each user-facing change.
 - Update both viewer.js?v=... and script.js?v=... cache-busting URLs to the same version.
-- Current version: v1.3.31.
+- Current version: v1.3.33.
 
 VALIDATION BASELINE
 - Run: node --check tools/pdf-serial-crosscheck/script.js
@@ -63,6 +63,13 @@ VALIDATION BASELINE
 - For viewer/persistence/highlight changes, load real PDFs, refresh, reopen a review, and confirm both the source and target PDF render with the expected highlights.
 
 RECENT CHANGE LOG
+2026-10-10 — v1.3.32 / v1.3.33
+- Comparison summary changes are reviewable: each change in the lists is a link that opens the viewer on the current job book at that field (exact rectangle highlight) with the tip "Previous job book: X -> This job book: Y". The viewer's prev/next steps through that list only (view only, no Verified/Issue marks). "Only in the comparison CSV" items have no current field, so they are plain text.
+- viewer.js: an opened item can now supply its own onStep (spec.onStep) which overrides the page-level step handler (v1.3.33).
+- Blank fields now keep their rectangle (blankFields[].rect); stored docs without it are re-extracted once on restore. Comparison rows carry docIndex and rect (not exported to CSV).
+- Updated: script.js, viewer.js, index.html, this file.
+- Validated: node --check; with the real SIF PDF + an edited comparison CSV the list opened the viewer, highlighted the field, showed the previous/current tip and Next stayed inside the list (1 of 2 -> 2 of 2).
+
 2026-10-10 — v1.3.31
 - Renamed the tool's display name from PDF Serial Cross-Check to Job Book Review (page title, heading, version tag, issues PDF footer, tool.json, manifest). Folder and id stay pdf-serial-crosscheck so URLs and saved data are unchanged.
 - Updated: index.html, script.js, viewer.js (comment), tool.json, tools/tools-manifest.json, this file.

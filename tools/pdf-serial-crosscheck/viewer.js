@@ -449,7 +449,9 @@
   }
 
   // ---- The overlay with one or two panes ----
-  window.createSncViewer = function ({ getDocs, onMark, onStep, onClose }) {
+  window.createSncViewer = function ({ getDocs, onMark, onStep: defaultOnStep, onClose }) {
+    // An opened item may bring its own step handler (e.g. a list of comparison changes).
+    const onStep = k => (current && current.onStep ? current.onStep(k) : defaultOnStep(k));
     const root = document.createElement('div');
     root.className = 'snc-viewer';
     root.hidden = true;
