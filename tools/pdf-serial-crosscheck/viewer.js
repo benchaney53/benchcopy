@@ -463,9 +463,9 @@
       '<div class="viewer-title"></div>' +
       '<div class="viewer-targets" aria-label="Required review targets"></div>' +
       '<div class="viewer-actions">' +
-      '<span class="viewer-step"><button type="button" class="btn btn-small" data-v="prev">&#8249; Previous <kbd>P</kbd></button>' +
+      '<span class="viewer-step"><button type="button" class="btn btn-small" data-v="prev">&#8249; Previous <kbd>P</kbd> <kbd>&uarr;</kbd></button>' +
       '<span class="viewer-count"></span>' +
-      '<button type="button" class="btn btn-small" data-v="next">Next <kbd>N</kbd> &#8250;</button></span>' +
+      '<button type="button" class="btn btn-small" data-v="next">Next <kbd>N</kbd> <kbd>&darr;</kbd> &#8250;</button></span>' +
       '<span class="viewer-mark"><button type="button" class="btn btn-small mark-ok" data-v="verified">&#10003; Verified <kbd>V</kbd></button>' +
       '<button type="button" class="btn btn-small mark-bad" data-v="issue">&#9888; Issue <kbd>I</kbd></button>' +
       '<button type="button" class="btn btn-small" data-v="clear">Clear <kbd>U</kbd></button></span>' +
@@ -474,11 +474,15 @@
       '</div></div>' +
       '<div class="viewer-tip" hidden></div>' +
       '<form class="viewer-note" hidden><label><strong>Issue note <span class="src">(optional &middot; one per item)</span></strong><textarea placeholder="Describe what is wrong or what needs follow-up…" aria-label="Issue note"></textarea></label><label><strong>Attach to document</strong><select aria-label="Attach issue note to document"></select></label><span class="note-error">Saved automatically</span></form>' +
-      '<div class="viewer-panes"><div class="pane"></div><div class="pane"></div></div>' +
+      '<div class="viewer-panes"><div class="pane"></div><div class="pane"></div><div class="pane"></div><div class="pane"></div></div>' +
       '</div>';
     document.body.appendChild(root);
-    const [elA, elB] = root.querySelectorAll('.pane');
-    const paneA = Pane(elA, getDocs), paneB = Pane(elB, getDocs);
+    const paneEls = [...root.querySelectorAll('.pane')];
+    const panes = paneEls.map(el => Pane(el, getDocs));
+    // Every pane after the first shows one required review target; a small label says which.
+    paneEls.slice(1).forEach(el => el.insertAdjacentHTML('afterbegin', '<div class="pane-target-label" hidden></div>'));
+    const paneA = panes[0];
+    const targetPanes = panes.slice(1), targetEls = paneEls.slice(1);
     const title = root.querySelector('.viewer-title'), tip = root.querySelector('.viewer-tip');
     const markBox = root.querySelector('.viewer-mark'), stepBox = root.querySelector('.viewer-step'), targetBox = root.querySelector('.viewer-targets');
     const noteBox = root.querySelector('.viewer-note'), noteInput = noteBox.querySelector('textarea'), noteDoc = noteBox.querySelector('select'), noteError = noteBox.querySelector('.note-error');
@@ -586,8 +590,8 @@
       if (e.target.matches('input, select, [contenteditable="true"]')) return;
       const key = e.key.toLowerCase();
       if (key === 'escape') { e.preventDefault(); close(); }
-      else if ((key === 'arrowleft' || key === 'p') && current && current.step && current.step.index > 0) { e.preventDefault(); onStep(current.step.index - 1); }
-      else if ((key === 'arrowright' || key === 'n') && current && current.step && current.step.index < current.step.total - 1) { e.preventDefault(); onStep(current.step.index + 1); }
+      else if ((key === 'arrowleft' || key === 'arrowup' || key === 'p') && current && current.step && current.step.index > 0) { e.preventDefault(); onStep(current.step.index - 1); }
+      else if ((key === 'arrowright' || key === 'arrowdown' || key === 'n') && current && current.step && current.step.index < current.step.total - 1) { e.preventDefault(); onStep(current.step.index + 1); }
       else if (key === 'v' && current && current.mark) { e.preventDefault(); root.querySelector('[data-v="verified"]').click(); }
       else if (key === 'i' && current && current.mark) { e.preventDefault(); if (current.mark.status === 'issue') { showIssueNote(true); } else root.querySelector('[data-v="issue"]').click(); }
       else if (key === 'u' && current && current.mark) { e.preventDefault(); root.querySelector('[data-v="clear"]').click(); }
@@ -598,7 +602,7 @@
     window.addEventListener('resize', () => {
       if (root.hidden) return;
       clearTimeout(rt);
-      rt = setTimeout(() => { paneA.relayout(); if (!elB.hidden) paneB.relayout(); }, 200);
+      rt = setTimeout(() => { paneA.relayout(); targetPanes.forEach((p, i) => { if (!targetEls[i].hidden) p.relayout(); }); }, 200);
     });
 
     return {
@@ -623,15 +627,30 @@
           stepBox.querySelector('[data-v="prev"]').disabled = spec.step.index <= 0;
           stepBox.querySelector('[data-v="next"]').disabled = spec.step.index >= spec.step.total - 1;
         }
-        elB.hidden = !spec.right;
-        root.classList.toggle('split', !!spec.right);
+        // Show every document the item must be checked against at the same time.
+        const shown = spec.targets
+          ? spec.targets.map((target, index) => ({ index, label: target.label, right: target.right, status: target.status })).filter(item => item.right).slice(0, targetEls.length)
+          : (spec.right ? [{ index: null, label: '', right: spec.right }] : []);
+        targetEls.forEach((el, i) => {
+          const item = shown[i];
+          el.hidden = !item;
+          const label = el.querySelector('.pane-target-label');
+          label.hidden = !item || shown.length < 2 && !spec.targets;
+          if (item) {
+            label.textContent = item.index == null ? '' : `${item.index + 1}. ${item.label}`;
+            label.className = 'pane-target-label' + (item.index === spec.targetIndex ? ' active' : '') + (item.status ? ' target-' + item.status : '');
+          }
+          el.classList.toggle('active-target', !!item && item.index === spec.targetIndex && shown.length > 1);
+        });
+        root.classList.toggle('split', shown.length > 0);
+        root.dataset.panes = String(1 + shown.length);
         root.hidden = false;
         document.body.classList.add('snc-viewer-open');
         root.querySelector('[data-v="close"]').focus();
         // Panes size themselves to their width, so render after layout.
         requestAnimationFrame(() => {
-          paneA.show({ ...spec.left, fit: spec.right ? 'width' : 'height' });
-          if (spec.right) paneB.show({ ...spec.right, fit: 'width' });
+          paneA.show({ ...spec.left, fit: shown.length ? 'width' : 'height' });
+          shown.forEach((item, i) => targetPanes[i].show({ ...item.right, fit: 'width' }));
         });
       },
       close,
