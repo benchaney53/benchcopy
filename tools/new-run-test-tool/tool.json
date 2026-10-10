@@ -1,5 +1,6 @@
 {
   "id": "new-run-test-tool",
+  "hidden": true,
   "name": "Enhanced Run Test Analyzer",
   "description": "Analyzes wind turbine SCADA data to find valid 72-hour run test windows based on M01 contractual reliability requirements. Features memory-efficient per-WTG processing, fault code 3-strike detection, availability tracking, and nominal power validation.",
   "icon": "<i class=\"fa-solid fa-wind\"></i>",

@@ -12,16 +12,18 @@ permissions:
 
 jobs:
   generate-manifest:
-    runs-on: ubuntu-latest
+    # Keep manifest generation on the current Ubuntu LTS instead of changing
+    # automatically when the ubuntu-latest image moves to Ubuntu 26.
+    runs-on: ubuntu-24.04
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v5
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.x'
     

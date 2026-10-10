@@ -1,7 +1,7 @@
 {
   "id": "pdf-serial-crosscheck",
-  "name": "PDF Serial Cross-Check",
-  "description": "Verify job book serials and VUIs against the ROMC across all construction documents",
+  "name": "Job Book Review",
+  "description": "Review populated ROMC and SIF fields against required job-book documents and manual records",
   "icon": "<i class=\"fa-solid fa-barcode\"></i>",
   "category": "PDF Tools",
   "technologies": [

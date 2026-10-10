@@ -1,6 +1,7 @@
 [
   {
     "id": "job-book-checker",
+    "hidden": true,
     "name": "Job Book Files Checker",
     "description": "Check if a job book folder contains all required files and folders",
     "category": "Utilities",
@@ -8,6 +9,7 @@
   },
   {
     "id": "new-run-test-tool",
+    "hidden": true,
     "name": "Enhanced Run Test Analyzer",
     "description": "Analyzes wind turbine SCADA data to find valid 72-hour run test windows based on M01 contractual reliability requirements. Features memory-efficient per-WTG processing, fault code 3-strike detection, availability tracking, and nominal power validation.",
     "icon": "<i class=\"fa-solid fa-wind\"></i>",
@@ -45,8 +47,8 @@
   },
   {
     "id": "pdf-serial-crosscheck",
-    "name": "PDF Serial Cross-Check",
-    "description": "Verify job book serials and VUIs against the ROMC across all construction documents",
+    "name": "Job Book Review",
+    "description": "Review populated ROMC and SIF fields against required job-book documents and manual records",
     "icon": "<i class=\"fa-solid fa-barcode\"></i>",
     "category": "PDF Tools",
     "technologies": [
@@ -57,6 +59,7 @@
   },
   {
     "id": "run-test-tool",
+    "hidden": true,
     "name": "Run Test Tool",
     "description": "Find optimal reliability and HOTS test windows from SCADA data. Analyzes WTG availability, power output, and category compliance.",
     "icon": "<i class=\"fa-solid fa-bolt\"></i>",

@@ -404,10 +404,21 @@
     </div>
     
     <script>
+        // Tools with "hidden": true in tool.json only appear when the URL contains
+        // ?show=hidden (remembered for this tab). Nothing on the site links to it.
+        function visibleTools(tools) {
+            let show = new URLSearchParams(window.location.search).get('show') === 'hidden';
+            try {
+                if (show) sessionStorage.setItem('bench-show-hidden', '1');
+                show = sessionStorage.getItem('bench-show-hidden') === '1';
+            } catch (e) { /* storage unavailable: URL parameter only */ }
+            return tools.filter(tool => !tool.hidden || show);
+        }
+
         async function discoverTools() {
             // Try to fetch the tools manifest first
             try {
-                const manifestResponse = await fetch('tools/tools-manifest.json');
+                const manifestResponse = await fetch('tools/tools-manifest.json', { cache: 'no-cache' });
                 if (manifestResponse.ok) {
                     const tools = await manifestResponse.json();
                     console.log('Loaded tools from manifest:', tools);
@@ -451,7 +462,7 @@
             const noTools = document.getElementById('no-tools');
             
             try {
-                const tools = await discoverTools();
+                const tools = visibleTools(await discoverTools());
                 
                 loading.style.display = 'none';
                 
@@ -494,6 +505,22 @@
         
         // Load tools when page loads
         document.addEventListener('DOMContentLoaded', loadTools);
+
+        // Typing BENCH (capital letters) on this page reveals the hidden tools for
+        // this browser tab. Ignored while typing in a form field.
+        (function () {
+            const secret = 'BENCH';
+            let typed = '';
+            document.addEventListener('keydown', event => {
+                if (event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return;
+                if (event.target && event.target.closest && event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+                typed = (typed + event.key).slice(-secret.length);
+                if (typed !== secret) return;
+                typed = '';
+                try { sessionStorage.setItem('bench-show-hidden', '1'); } catch (e) { return; }
+                window.location.reload();
+            });
+        })();
         
         // Theme toggle functionality
         const themeToggle = document.getElementById('theme-toggle');

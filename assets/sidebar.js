@@ -20,9 +20,10 @@
     async function loadToolsList() {
         try {
             const basePath = getBasePath();
-            const response = await fetch(basePath + 'tools/tools-manifest.json');
+            const response = await fetch(basePath + 'tools/tools-manifest.json', { cache: 'no-cache' });
             const tools = await response.json();
-            return tools;
+            // Tools marked "hidden" in tool.json never appear in the sidebar.
+            return (Array.isArray(tools) ? tools : []).filter(tool => !tool.hidden);
         } catch (error) {
             console.warn('Could not load tools manifest:', error);
             return [];

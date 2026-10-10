@@ -1,5 +1,6 @@
 {
   "id": "run-test-tool",
+  "hidden": true,
   "name": "Run Test Tool",
   "description": "Find optimal reliability and HOTS test windows from SCADA data. Analyzes WTG availability, power output, and category compliance.",
   "icon": "<i class=\"fa-solid fa-bolt\"></i>",

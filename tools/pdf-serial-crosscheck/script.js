@@ -2,15 +2,20 @@
   'use strict';
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const STANDARD_FONT_DATA_URL = 'https://unpkg.com/pdfjs-dist@3.11.174/standard_fonts/';
 
   const $ = id => document.getElementById(id);
+  // Some option controls have been removed from the page; fall back to the
+  // original defaults instead of throwing when one is absent.
+  const checked = (id, dflt) => { const el = $(id); return el ? el.checked : dflt; };
+  const textOf = (id, dflt) => { const el = $(id); return el ? el.value : dflt; };
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const normName = s => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
   const alnum = s => String(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
 
   // docs: { name, short, numPages, pages:[{text, norm, hasText}], fieldList:[{name,value,page,label,section}],
   //         fields:{name:Set}, text, error }
-  const state = { docs: [], refIdx: -1, refAuto: true, mode: 'jobbook', rowsB: [], jb: null, jbRows: [], reviews: new Map(), reviewsFor: '' };
+  const state = { docs: [], refIdx: -1, refAuto: true, mode: 'jobbook', rowsB: [], jb: null, jbRows: [], reviews: new Map(), reviewNotes: new Map(), reviewsFor: '', reviewPosition: null, reviewScope: 'all', ignoredDocTypes: [], baseline: null, skip: { dates: true, initials: false, names: false, company: false, yesno: false } };
 
   // Keep the original PDF blobs, as well as their extracted text, in IndexedDB.
   // localStorage is deliberately not used here: a normal job book can be far too
@@ -40,7 +45,7 @@
   function storedDoc(d) {
     return {
       id: d.id, name: d.name, blob: d.blob, numPages: d.numPages, pages: d.pages,
-      fieldList: d.fieldList, fields: Object.fromEntries(Object.entries(d.fields).map(([k, v]) => [k, [...v]])),
+      fieldList: d.fieldList, blankFields: d.blankFields, fields: Object.fromEntries(Object.entries(d.fields).map(([k, v]) => [k, [...v]])),
       text: d.text, error: d.error,
     };
   }
@@ -64,7 +69,10 @@
   async function saveSession() {
     const db = await openStore();
     const ref = state.docs[state.refIdx];
-    await transaction(db, STORE_SESSION, 'readwrite', store => store.put({ ids: state.docs.map(d => d.id), refId: ref && ref.id, refAuto: state.refAuto }, SESSION_KEY));
+    await transaction(db, STORE_SESSION, 'readwrite', store => store.put({
+      ids: state.docs.map(d => d.id), refId: ref && ref.id, refAuto: state.refAuto,
+      reviewPosition: state.reviewPosition, reviewScope: state.reviewScope, ignoredDocTypes: state.ignoredDocTypes, skip: state.skip,
+    }, SESSION_KEY));
   }
   async function removeStoredDocument(id) {
     const db = await openStore();
@@ -90,8 +98,29 @@
         req.onerror = () => reject(req.error);
       })));
       state.docs = docs.filter(d => d && d.blob).map(restoredDoc);
+      // Older saved sessions predate form-field rectangles. Re-extract only those
+      // PDFs once, so future reviews can point to the actual source field instead
+      // of guessing from a repeated label or value.
+      const missingLocations = state.docs.filter(d => d.fieldList && (!Array.isArray(d.blankFields) || d.fieldList.some(f => !Array.isArray(f.rect))));
+      if (missingLocations.length) {
+        await Promise.all(missingLocations.map(async oldDoc => {
+          try {
+            const refreshed = await extract(oldDoc.blob, oldDoc.name);
+            refreshed.id = oldDoc.id;
+            const index = state.docs.indexOf(oldDoc);
+            if (index >= 0) state.docs[index] = refreshed;
+            await saveDocument(refreshed);
+          } catch (e) {
+            console.warn('Could not refresh saved field locations:', e);
+          }
+        }));
+      }
       state.refAuto = session.refAuto !== false;
       state.refIdx = state.docs.findIndex(d => d.id === session.refId);
+      state.reviewPosition = session.reviewPosition || null;
+      state.reviewScope = ['all', 'romc', 'sif'].includes(session.reviewScope) ? session.reviewScope : 'all';
+      state.ignoredDocTypes = Array.isArray(session.ignoredDocTypes) ? session.ignoredDocTypes.filter(k => typeof k === 'string') : [];
+      if (session.skip && typeof session.skip === 'object') Object.keys(state.skip).forEach(k => { if (typeof session.skip[k] === 'boolean') state.skip[k] = session.skip[k]; });
       if (state.refIdx < 0) state.refAuto = true;
       renderDocs();
       run();
@@ -104,16 +133,49 @@
   }
   const newDocumentId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-  // Reviewer marks ("verified" / "issue") per ROMC row, remembered per reference file.
-  const reviewKey = e => e.label + '\u0000' + e.n;
+  // Reviewer marks are kept per source field and required review target. A field
+  // that must be checked in two places deliberately has two independent marks.
+  const reviewKey = e => [e.sourceId || '', e.name || e.label, e.value, e.targetKey || 'legacy'].join('\u0000');
+  const fieldKey = e => [e.sourceId || '', e.name || e.label, e.value, e.page || ''].join('\u0000');
+  const legacyReviewKey = e => [e.label, e.n].join('\u0000');
   function loadReviews(ref) {
     if (state.reviewsFor === ref.name) return;
     state.reviewsFor = ref.name;
     state.reviews = new Map();
-    try { Object.entries(JSON.parse(localStorage.getItem('snc-reviews:' + ref.name) || '{}')).forEach(([k, v]) => state.reviews.set(k, v)); } catch (e) { /* storage unavailable */ }
+    state.reviewNotes = new Map();
+    try {
+      const saved = JSON.parse(localStorage.getItem('snc-reviews:' + ref.name) || '{}');
+      const marks = saved.marks || saved; // keep pre-note review marks working
+      Object.entries(marks).forEach(([k, v]) => state.reviews.set(k, v));
+      Object.entries(saved.notes || {}).forEach(([k, v]) => state.reviewNotes.set(k, v));
+    } catch (e) { /* storage unavailable */ }
   }
   function saveReviews() {
-    try { localStorage.setItem('snc-reviews:' + state.reviewsFor, JSON.stringify(Object.fromEntries(state.reviews))); } catch (e) { /* storage unavailable */ }
+    try { localStorage.setItem('snc-reviews:' + state.reviewsFor, JSON.stringify({ marks: Object.fromEntries(state.reviews), notes: Object.fromEntries(state.reviewNotes) })); } catch (e) { /* storage unavailable */ }
+  }
+  // Previous releases stored a review mark per ROMC label/value, before a field
+  // could have more than one required target. Carry it forward when there is
+  // exactly one new target. Ambiguous old marks remain stored, rather than being
+  // incorrectly applied to every new target.
+  function migrateLegacyReviews(entries) {
+    const byLegacyKey = new Map();
+    entries.filter(e => e.sourceKind === 'romc').forEach(e => {
+      const key = legacyReviewKey(e);
+      if (!byLegacyKey.has(key)) byLegacyKey.set(key, []);
+      byLegacyKey.get(key).push(e);
+    });
+    let changed = false, unresolved = 0;
+    for (const [key, mark] of state.reviews) {
+      const parts = key.split('\u0000');
+      if (parts.length !== 2) continue;
+      const choices = byLegacyKey.get(key) || [];
+      if (choices.length === 1) {
+        const targetKey = reviewKey(choices[0]);
+        if (!state.reviews.has(targetKey)) { state.reviews.set(targetKey, mark); changed = true; }
+      } else if (choices.length > 1) unresolved++;
+    }
+    if (changed) saveReviews();
+    return unresolved;
   }
 
   // Link that opens a document page in the viewer, highlighting a value.
@@ -179,11 +241,11 @@
   }
 
   async function extract(file, displayName) {
-    const doc = { id: newDocumentId(), name: displayName || file.name, blob: file, numPages: 0, pages: [], fieldList: [], fields: {}, text: '', error: null };
+    const doc = { id: newDocumentId(), name: displayName || file.name, blob: file, numPages: 0, pages: [], fieldList: [], blankFields: [], fields: {}, text: '', error: null };
     let pdf;
     try {
       const data = new Uint8Array(await file.arrayBuffer());
-      pdf = await pdfjsLib.getDocument({ data }).promise;
+      pdf = await pdfjsLib.getDocument({ data, standardFontDataUrl: STANDARD_FONT_DATA_URL }).promise;
       doc.numPages = pdf.numPages;
       const headings = [];
       const widgets = [];
@@ -231,10 +293,10 @@
           }
           if (!a.fieldName || a.checkBox || a.radioButton || a.pushButton) continue;
           let v = a.fieldValue;
-          if (v == null || v === '' || v === 'Off') continue;
+          if (v == null || v === '' || v === 'Off') { widgets.push({ name: a.fieldName, value: '', page: p, rect: a.rect, row: rowLabel(items, a.rect), blank: true }); continue; }
           if (Array.isArray(v)) v = v.join(', ');
           v = String(v).trim();
-          if (!v) continue;
+          if (!v) { widgets.push({ name: a.fieldName, value: '', page: p, rect: a.rect, row: rowLabel(items, a.rect), blank: true }); continue; }
           pageFieldVals.push(v);
           widgets.push({ name: a.fieldName, value: v, page: p, rect: a.rect, row: rowLabel(items, a.rect) });
         }
@@ -255,7 +317,8 @@
         }
         const secLabel = sec ? `${sec.num} ${sec.title}` : '';
         const label = [secLabel, w.row].filter(Boolean).join(' – ') || w.name;
-        doc.fieldList.push({ name: w.name, value: w.value, page: w.page, label, section: sec ? sec.num : '' });
+          if (w.blank) { doc.blankFields.push({ name: w.name, page: w.page, label, section: sec ? sec.num : '' }); continue; }
+          doc.fieldList.push({ name: w.name, value: w.value, page: w.page, label, section: sec ? sec.num : '', rect: w.rect });
         (doc.fields[w.name] ||= new Set()).add(w.value);
       }
       doc.text = texts.join('\n');
@@ -272,19 +335,18 @@
   // =====================================================================
   function opts() {
     return {
-      useFields: $('snc-usefields').checked,
-      useText: $('snc-usetext').checked,
-      minTwo: $('snc-mintwo').checked,
-      ignoreCase: $('snc-ignorecase').checked,
-      ignoreSep: $('snc-ignoresep').checked,
-      fieldFilter: $('snc-fieldfilter').value.trim(),
-      skip: $('snc-skip').value.trim(),
+      useFields: checked('snc-usefields', true),
+      useText: checked('snc-usetext', true),
+      minTwo: checked('snc-mintwo', true),
+      ignoreCase: checked('snc-ignorecase', true),
+      ignoreSep: checked('snc-ignoresep', true),
+      fieldFilter: textOf('snc-fieldfilter', 'serial|s\/?n\b|sn$|_sn|sn_').trim(),
     };
   }
 
   function parseAliases() {
     const map = new Map();
-    for (const line of $('snc-aliases').value.split('\n')) {
+    for (const line of textOf('snc-aliases', '').split('\n')) {
       const i = line.indexOf('=');
       if (i < 0) continue;
       const canon = line.slice(0, i).trim();
@@ -310,13 +372,6 @@
   }
   const parseRules = () => parsePipeLines($('snc-rules').value, $('snc-ruleerr'),
     (label, src) => ({ label, re: new RegExp(src, 'gi') }));
-  // "ROMC item regex | filename regex [| photo]" — "photo" means the evidence is usually a
-  // picture, so a value missing from the text is a visual check rather than a failure.
-  const parseJbRules = () => parsePipeLines($('snc-jbrules').value, $('snc-jberr'), (labelSrc, rest) => {
-    const [docSrc, flag = ''] = rest.split(/\s+\|\s+/);
-    return { labelSrc, docSrc: docSrc.trim(), photo: /photo/i.test(flag), labelRe: new RegExp(labelSrc, 'i'), docRe: new RegExp(docSrc.trim(), 'i') };
-  });
-
   // A value worth cross-checking: has a digit, at least 5 letters/digits, and isn't
   // a date, a year, a weight or N/A.
   function serialLike(v) {
@@ -402,109 +457,183 @@
   }
 
   // =====================================================================
-  // Mode A: job book check against a reference document (ROMC)
+  // Mode A: full field review plan. Every populated, non-N/A ROMC and SIF
+  // field is a review item. Document, IH10, VDD and project-tracker checks
+  // are separate targets, so one successful check never hides another.
   // =====================================================================
+  const isNA = value => /^(?:n\/?a|not applicable)$/i.test(String(value).trim());
+  // Dates, initials, names, companies and Yes/No answers can each be skipped from
+  // the review queue with the toggles on the Start Job Book Review card
+  // (state.skip). Dates are identified by their form-field name/label as well as
+  // common date-only values.
+  const isDateField = (field, value) => {
+    const label = `${field.name || ''} ${field.label || ''}`;
+    const v = String(value || '').trim();
+    return /\bdate\b|date[_\s-]?(?:of|signed|completed|issued|approved)|\bdated\b|timestamp/i.test(label) ||
+      /^\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}$/.test(v) ||
+      /^\d{4}[\/.\-]\d{1,2}[\/.\-]\d{1,2}$/.test(v) ||
+      /^\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{2,4}$/i.test(v);
+  };
+  const isInitialsField = field => /initial/i.test(`${field.name || ''} ${field.label || ''}`);
+  const isCompanyField = field => /company|contractor|manufacturer|supplier|vendor|customer|client|employer|organi[sz]ation/i.test(`${field.name || ''} ${field.label || ''}`);
+  // A person's name: signatory/technician style labels, not site, turbine or component names.
+  const isPersonNameField = field => {
+    const label = `${field.name || ''} ${field.label || ''}`;
+    return /\b(?:name|technician|inspector|engineer|supervisor|witness|signed.?by|performed.?by|checked.?by|approved.?by|completed.?by|prepared.?by|reviewed.?by)\b/i.test(label) &&
+      !/manufacturer|company|site|farm|project|turbine|component|part|model|tower|file|document|wtg|pad/i.test(label);
+  };
+  const isYesNoValue = value => /^(?:yes|no|y|n|true|false|yes\s*\/\s*no)$/i.test(String(value || '').trim());
+  const shouldSkipField = (field, value) =>
+    (state.skip.dates && isDateField(field, value)) ||
+    (state.skip.initials && isInitialsField(field)) ||
+    (state.skip.names && isPersonNameField(field)) ||
+    (state.skip.company && isCompanyField(field)) ||
+    (state.skip.yesno && isYesNoValue(value));
+  const docTarget = (key, label, re, photo) => ({ key, label, re, photo: !!photo });
+  const manualTarget = (key, label) => ({ key, label, manual: true });
+  function sourceKind(doc) {
+    if (/recording.?of.?main.?components|\bromc\b/i.test(doc.name)) return 'romc';
+    if (/service.?inspection.?form|\bsif\b/i.test(doc.name)) return 'sif';
+    return null;
+  }
+  // Every document type in the Review Guide is required by default. A site that
+  // does not use one can tick "Ignore for this site" (state.ignoredDocTypes),
+  // which greys the row out instead of removing it.
+  const documentTypes = [
+    { key: 'romc', label: 'Recording of Main Components (ROMC)', re: /recording.?of.?main.?components|\bromc\b/i, suggested: 'ROMC_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
+    { key: 'sif', label: 'Service Inspection Form (SIF)', re: /service.?inspection.?form|\bsif\b/i, suggested: 'SIF_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
+    { key: 'rescue', label: 'Rescue Kit Inspection', re: /rescue.?kit/i, suggested: 'Rescue_Kit_Inspection_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
+    { key: 'hv', label: 'High Voltage Cable Test Report', re: /high.?voltage.?cable|\bhv.?cable/i, suggested: 'High_Voltage_Cable_Test_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
+    { key: 'safety', label: 'Safety Cable Inspection', re: /safety.?cable|fall.?arrest|wire.?rope/i, suggested: 'Safety_Cable_Inspection_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
+    { key: 'mechanical', label: 'Mechanical Completion Checklist', re: /mechanical.?completion/i, suggested: 'Mechanical_Completion_Checklist_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
+    { key: 'bolts', label: 'Bolt Certificates', re: /bolt.?cert/i, suggested: 'Bolt_Certificates_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
+    { key: 'serviceLift', label: 'Service Lift Installation Checklist', re: /service.?lift/i, suggested: 'Service_Lift_Installation_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
+    { key: 'aviation', label: 'Aviation Light Manual', re: /aviation|faa|obstruction/i, suggested: 'Aviation_Light_Manual_WTG-XXXXXX_Pad-XX.pdf', required: () => true },
+  ];
+  const isDocTypeIgnored = type => state.ignoredDocTypes.includes(type.key);
+  function requiredDocumentTypes() { return documentTypes.filter(type => type.required(state.docs) && !isDocTypeIgnored(type)); }
+  function targetsFor(source, field) {
+    const sec = field.section || '';
+    if (source === 'sif') {
+      const targets = [manualTarget('sif-completeness', 'SIF completeness, dates, signatures and N/A review')];
+      if (field.page <= 4) targets.push(docTarget('romc-header', 'ROMC turbine / pad / WTG header', /recording.?of.?main.?components|\bromc\b/i));
+      return targets;
+    }
+    if (!sec && field.page <= 2) return [docTarget('sif-header', 'SIF turbine / pad / WTG header', /service.?inspection.?form|\bsif\b/i)];
+    if (/^4\.6\b/.test(sec)) return [
+      manualTarget('ih10-rescue', 'IH10 component record'),
+      docTarget('rescue-kit', 'Rescue Kit Inspection', /rescue.?kit/i, true),
+    ];
+    if (/^9\.2\b/.test(sec)) return [
+      manualTarget('ih10-vdd-hv', 'IH10 and VDD component record'),
+      docTarget('hv-cable', 'High Voltage Cable Test Report', /high.?voltage.?cable|\bhv.?cable/i, true),
+    ];
+    if (/^10\b/.test(sec)) return [
+      manualTarget('ih10-vdd-lift', 'IH10 and VDD component record'),
+      docTarget('service-lift', 'Service Lift Inspection', /service.?lift/i, true),
+    ];
+    if (/^11\b/.test(sec)) return [
+      manualTarget('ih10-bolts', 'IH10 item / VUI record'),
+      docTarget('bolt-certs', 'Bolt Certificates', /bolt.?cert/i, true),
+    ];
+    if (/^13\.[23]\b/.test(sec)) return [
+      docTarget('aviation-lights', 'Aviation Light Manual', /aviation|faa|obstruction/i, true),
+      manualTarget('tracker-aviation', 'Project tracker duplicate-serial check'),
+    ];
+    if (/^(?:14|15)\b/.test(sec)) return [manualTarget('tracker-special', 'Project tracker duplicate-serial check')];
+    if (/^(?:2|3|4\.[1-5]|4\.[7-9]|5|6|7|8|9\.[13]|12)\b/.test(sec)) return [manualTarget('ih10-vdd', 'IH10 and VDD component record')];
+    return [manualTarget('romc-review', 'ROMC field accuracy review')];
+  }
+  function groupReviewEntries(entries) {
+    const byField = new Map();
+    for (const entry of entries) {
+      const key = fieldKey(entry);
+      if (!byField.has(key)) byField.set(key, { key, entry, targets: [] });
+      byField.get(key).targets.push(entry);
+    }
+    return [...byField.values()].sort((a, b) => reviewTableOrder(a.entry, b.entry));
+  }
+  // PDF coordinates start at the bottom-left. The largest Y coordinate is the
+  // top of a field, so sorting it descending follows the natural reading order.
+  function reviewLocationOrder(a, b) {
+    const top = entry => Array.isArray(entry.rect) ? Math.max(entry.rect[1], entry.rect[3]) : -1;
+    const left = entry => Array.isArray(entry.rect) ? Math.min(entry.rect[0], entry.rect[2]) : 0;
+    return (a.page - b.page) || (top(b) - top(a)) || (left(a) - left(b)) || a.label.localeCompare(b.label);
+  }
+  function reviewTableOrder(a, b) {
+    const sourceOrder = { romc: 0, sif: 1 };
+    return ((sourceOrder[a.sourceKind] ?? 9) - (sourceOrder[b.sourceKind] ?? 9)) || reviewLocationOrder(a, b) || a.targetLabel.localeCompare(b.targetLabel);
+  }
+  function noteDetails(note) {
+    if (!note) return { text: '', document: null };
+    return typeof note === 'string' ? { text: note, document: null } : { text: note.text || '', document: note.document || null };
+  }
+  function noteLabel(note) {
+    const details = noteDetails(note);
+    return details.document && details.document.name ? ` (${details.document.name})` : '';
+  }
+  function reviewTip(entry) {
+    const target = entry.targetLabel;
+    const common = `Compare the highlighted ${entry.sourceKind.toUpperCase()} field with ${target}. Mark Verified only when the value is present and matches.`;
+    switch (entry.targetKey) {
+      case 'romc-header': return `${common} This is a turbine / pad / WTG header check.`;
+      case 'sif-header': return `${common} This is a turbine / pad / WTG header check.`;
+      case 'rescue-kit': return `${common} Use the Rescue Kit Inspection record, including the applicable serial or VUI.`;
+      case 'hv-cable': return `${common} Use the High Voltage Cable Test Report and confirm the matching cable/component identifier.`;
+      case 'service-lift': return `${common} Use the Service Lift Inspection record and confirm the matching lift identifier.`;
+      case 'bolt-certs': return `${common} Use the Bolt Certificates and confirm the relevant batch or component identifier.`;
+      case 'aviation-lights': return `${common} Use the Aviation Light Manual and confirm the applicable light identifier.`;
+      case 'ih10-rescue': return `${common} Find the matching component entry in IH10.`;
+      case 'ih10-vdd-hv': return `${common} Find the matching component entry in IH10 and VDD.`;
+      case 'ih10-vdd-lift': return `${common} Find the matching component entry in IH10 and VDD.`;
+      case 'ih10-bolts': return `${common} Confirm the IH10 item and VUI record.`;
+      case 'ih10-vdd': return `${common} Find the matching component entry in IH10 and VDD.`;
+      case 'tracker-aviation': return `${common} Check the project tracker for a duplicate serial.`;
+      case 'tracker-special': return `${common} Check the project tracker for a duplicate serial.`;
+      case 'sif-completeness': return `Confirm this SIF field is complete and accurate. Mark Issue if its required supporting information is missing or needs follow-up.`;
+      default: return common;
+    }
+  }
+  function viewerDocuments() { return state.docs.map((doc, index) => ({ id: doc.id, name: doc.name, index })); }
   function compareJobBook() {
-    const o = opts();
-    const ref = state.docs[state.refIdx];
-    if (!ref || ref.error) { state.jb = null; return; }
-    let skip = null;
-    try { skip = o.skip ? new RegExp(o.skip, 'i') : null; } catch (e) { skip = null; }
-    const rules = parseJbRules();
-    const others = state.docs.map((d, i) => ({ d, i })).filter(x => x.i !== state.refIdx && !x.d.error);
-
-    // 1. Reference entries
+    const sources = state.docs.map((d, i) => ({ d, i, kind: sourceKind(d) })).filter(x => x.kind && !x.d.error);
+    if (!sources.length) { state.jb = null; return; }
     const entries = [];
-    const seen = new Set();
-    for (const f of ref.fieldList) {
-      if (skip && (skip.test(f.label) || skip.test(f.value))) continue;
-      const parts = f.value.split(/\s*[,;&]\s*/).filter(Boolean);
-      for (const part of parts.length > 1 ? parts : [f.value]) {
-        const v = part.trim();
-        if (!serialLike(v)) continue;
-        const key = f.label + '\u0000' + alnum(v);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        entries.push({ label: f.label, value: v, n: alnum(v), page: f.page, section: f.section });
-      }
-    }
-
-    // 1b. VUI first: where a component has a VUI, check the VUI and leave out its serial
-    //     number. Components with no VUI (e.g. aviation lights) keep the serial.
-    if ($('snc-vuifirst').checked) {
-      const withVui = new Set(entries.filter(e => /\bvuis?\b/i.test(e.label)).map(e => e.section || e.label));
-      for (let k = entries.length - 1; k >= 0; k--) {
-        const e = entries[k];
-        if (/serial/i.test(e.label) && !/\bvui/i.test(e.label) && withVui.has(e.section || e.label)) entries.splice(k, 1);
-      }
-    }
-
-    // 2. Duplicates: same value under two different components (sections)
-    const bySection = new Map();
-    for (const e of entries) {
-      if (!bySection.has(e.n)) bySection.set(e.n, new Map());
-      bySection.get(e.n).set(e.section || e.label, e.label);
-    }
-
-    // 3. Search every other document; apply rules
-    for (const e of entries) {
-      e.found = [];
-      for (const { d, i } of others) {
-        const pages = [];
-        d.pages.forEach((pg, pi) => { if (pg.norm.includes(e.n)) pages.push(pi + 1); });
-        if (pages.length) e.found.push({ i, pages });
-      }
-      const dupMap = bySection.get(e.n);
-      e.dupWith = dupMap.size > 1 ? [...dupMap.values()].filter(l => l !== e.label) : [];
-
-      const matched = rules.filter(r => r.labelRe.test(e.label));
-      e.ruleDocs = matched.map(r => r.docSrc);
-      e.expected = others.filter(({ d }) => matched.some(r => r.docRe.test(d.name))).map(x => x.i);
-      const foundExpected = e.found.filter(f => e.expected.includes(f.i));
-
-      if (matched.length) {
-        if (!e.expected.length) e.status = 'notloaded';
-        else if (foundExpected.length) e.status = 'confirmed';
-        else {
-          e.scanPages = [];
-          for (const i of e.expected) {
-            const sp = state.docs[i].pages.map((p, k) => p.hasText ? 0 : k + 1).filter(Boolean);
-            if (sp.length) e.scanPages.push({ i, pages: sp });
+    for (const { d, i, kind } of sources) {
+      for (const f of d.fieldList) {
+        const value = String(f.value || '').trim();
+        if (!value || isNA(value) || shouldSkipField(f, value)) continue;
+        // A comma belongs to this one form field; it never creates another review.
+        for (const target of targetsFor(kind, f)) {
+          const entry = { sourceId: d.id || d.name, sourceIdx: i, sourceKind: kind, name: f.name, label: f.label, value, n: alnum(value), page: f.page, rect: f.rect, section: f.section, targetKey: target.key, targetLabel: target.label, expected: [], found: [], scanPages: [] };
+          if (target.manual) entry.status = 'manual';
+          else {
+            entry.expected = state.docs.map((candidate, index) => ({ candidate, index }))
+              .filter(x => x.index !== i && !x.candidate.error && target.re.test(x.candidate.name)).map(x => x.index);
+            if (!entry.expected.length) entry.status = 'notloaded';
+            else if (!entry.n) entry.status = 'visual';
+            else {
+              for (const index of entry.expected) {
+                const pages = state.docs[index].pages.map((pg, pageIndex) => pg.norm.includes(entry.n) ? pageIndex + 1 : 0).filter(Boolean);
+                if (pages.length) entry.found.push({ i: index, pages });
+                else {
+                  const scanned = state.docs[index].pages.map((pg, pageIndex) => pg.hasText ? 0 : pageIndex + 1).filter(Boolean);
+                  if (scanned.length) entry.scanPages.push({ i: index, pages: scanned });
+                }
+              }
+              entry.status = entry.found.length ? 'confirmed' : (entry.scanPages.length || target.photo) ? 'visual' : 'notfound';
+            }
           }
-          e.photo = matched.some(r => r.photo);
-          for (const i of e.expected) {
-            const nm = nearMiss(state.docs[i], e.value);
-            if (nm) { e.near = { ...nm, doc: i }; break; }
-          }
-          // A near-identical value in the text is the strongest sign of a typo.
-          e.status = e.near ? 'mismatch' : (e.scanPages.length || e.photo) ? 'visual' : 'notfound';
+          entries.push(entry);
         }
-      } else {
-        e.status = e.found.length ? 'alsofound' : 'refonly';
-      }
-      if (e.dupWith.length) e.status = 'duplicate';
-    }
-
-    // 4. Serials named in other documents that the reference doesn't contain
-    const refSet = new Set(entries.map(e => e.n));
-    const refAll = alnum(ref.fieldList.map(f => f.value).join(' '));
-    const extra = [];
-    const extraSeen = new Set();
-    for (const { d, i } of others) {
-      for (const s of labeledSerials(d)) {
-        const n = alnum(s.value);
-        if (refSet.has(n) || refAll.includes(n)) continue;
-        const k = i + '\u0000' + n;
-        if (extraSeen.has(k)) continue;
-        extraSeen.add(k);
-        extra.push({ ...s, doc: i });
       }
     }
-
-    state.jb = { entries, extra, refIdx: state.refIdx };
+    entries.sort(reviewTableOrder);
+    state.jb = { entries, groups: groupReviewEntries(entries), extra: [], refIdx: state.refIdx };
   }
 
   const JB = {
+    manual: { t: 'MANUAL REVIEW', c: 'warn', o: 0 },
     mismatch: { t: 'MISMATCH', c: 'bad', o: 0 },
     duplicate: { t: 'DUPLICATE', c: 'bad', o: 1 },
     notfound: { t: 'NOT FOUND', c: 'bad', o: 2 },
@@ -518,6 +647,7 @@
   function jbDetail(e) {
     const docName = i => esc(state.docs[i].short);
     switch (e.status) {
+      case 'manual': return `Review against <strong>${esc(e.targetLabel)}</strong>`;
       case 'duplicate': return `Same value also entered for: ${e.dupWith.map(esc).join('; ')}`;
       case 'mismatch': return `${openLink(e.near.doc, e.near.page, e.near.value, `${docName(e.near.doc)} p.${e.near.page}`)} has <span class="chip bad">${esc(e.near.value)}</span> — ${e.near.d} character${e.near.d > 1 ? 's' : ''} different`;
       case 'notfound': return `Not in ${e.expected.map(docName).join(', ')}`;
@@ -526,7 +656,7 @@
         return `Not in the text of ${e.expected.map(docName).join(', ')}. ` +
           (where.length ? `Check the scanned page(s): ${where.join('; ')}` : 'Check the photo of the tag');
       }
-      case 'notloaded': return `Expected in a document matching <code>${esc(e.ruleDocs.join(' / '))}</code>, which isn't loaded`;
+      case 'notloaded': return `Expected document is not loaded: <strong>${esc(e.targetLabel)}</strong>`;
       default: return '';
     }
   }
@@ -545,38 +675,51 @@
 
   // keepRows: re-draw the same rows in the same order (used while stepping through in the viewer).
   function renderJobBook(keepRows) {
-    const sum = $('snc-jb-summary'), tbl = $('snc-jb-table'), ex = $('snc-jb-extra');
+    const launcher = $('snc-review-launcher'), sum = $('snc-jb-summary'), tbl = $('snc-jb-table'), ex = $('snc-jb-extra');
     const jb = state.jb;
     if (!jb) {
+      launcher.innerHTML = state.docs.length ? '<div class="review-launcher-empty">Choose or load a ROMC or SIF document to begin a Job Book Review.</div>' : '';
       sum.innerHTML = state.docs.length ? '<p class="none">Pick a reference document (the ROMC) in the list above.</p>' : '';
       tbl.innerHTML = ''; ex.innerHTML = '';
       return;
     }
-    const ref = state.docs[jb.refIdx];
-    const issuesOnly = $('snc-issuesonly').checked;
+    const ref = state.docs[jb.refIdx] || state.docs.find(d => sourceKind(d) === 'romc') || state.docs[0];
+    const issuesOnly = checked('snc-issuesonly', false);
     const counts = {};
     jb.entries.forEach(e => { counts[e.status] = (counts[e.status] || 0) + 1; });
-    sum.innerHTML = `<p>Reference: <strong>${esc(ref.short)}</strong> · ${jb.entries.length} serials/VUIs checked</p><p>` +
+    sum.innerHTML = `<p>Review plan: <strong>${jb.entries.length}</strong> populated ROMC/SIF field targets</p><p>` +
       Object.keys(JB).filter(k => counts[k]).map(k => `<span class="st-${JB[k].c}">${counts[k]} ${JB[k].t.toLowerCase()}</span>`).join('') + '</p>';
 
     loadReviews(ref);
+    const unresolvedLegacy = migrateLegacyReviews(jb.entries);
     const reviewed = Object.values(Object.fromEntries(state.reviews));
     const nVer = reviewed.filter(v => v === 'verified').length, nIss = reviewed.filter(v => v === 'issue').length;
+    const progress = scope => {
+      const groups = reviewGroups(scope);
+      const total = groups.reduce((n, group) => n + group.targets.length, 0);
+      const complete = groups.reduce((n, group) => n + group.targets.filter(e => state.reviews.get(reviewKey(e)) === 'verified').length, 0);
+      return { total, complete };
+    };
+    const allProgress = progress('all'), romcProgress = progress('romc'), sifProgress = progress('sif');
+    launcher.innerHTML = `<section class="review-launcher" aria-label="Start Job Book Review"><div class="review-launcher-copy"><strong>Start Job Book Review</strong><span>Review every required field one at a time, with its source and matching job-book record side by side.</span></div><label class="review-scope-label">Review<select id="snc-review-scope" aria-label="Review scope"><option value="all"${state.reviewScope === 'all' ? ' selected' : ''}>All job book fields</option><option value="romc"${state.reviewScope === 'romc' ? ' selected' : ''}>ROMC fields only</option><option value="sif"${state.reviewScope === 'sif' ? ' selected' : ''}>SIF fields only</option></select></label><button type="button" class="btn btn-review-start" data-start-review${allProgress.total ? '' : ' disabled'}>Start / resume review</button><div class="review-skip" role="group" aria-label="Fields to skip"><span>Skip:</span>${[['dates', 'Dates'], ['initials', 'Initials'], ['names', 'Names'], ['company', 'Company'], ['yesno', 'Yes / No answers']].map(([k, t]) => `<label><input type="checkbox" data-skip="${k}"${state.skip[k] ? ' checked' : ''}> ${t}</label>`).join('')}</div><div class="review-launcher-progress">All <strong>${allProgress.complete}/${allProgress.total}</strong> &middot; ROMC <strong>${romcProgress.complete}/${romcProgress.total}</strong> &middot; SIF <strong>${sifProgress.complete}/${sifProgress.total}</strong></div></section>`;
     if (nVer || nIss) sum.innerHTML += `<p class="src">Your review: ${nVer} verified · ${nIss} marked as issue</p>`;
+    if (unresolvedLegacy) sum.innerHTML += `<p class="src">${unresolvedLegacy} earlier review mark${unresolvedLegacy === 1 ? '' : 's'} kept for reference because this field now has multiple separate targets.</p>`;
 
     const rows = keepRows ? state.jbRows : jb.entries
-      .filter(e => !issuesOnly || (['mismatch', 'duplicate', 'notfound', 'visual', 'notloaded'].includes(e.status) && state.reviews.get(reviewKey(e)) !== 'verified') || state.reviews.get(reviewKey(e)) === 'issue')
-      .sort((a, b) => JB[a.status].o - JB[b.status].o || a.page - b.page);
+      .filter(e => !issuesOnly || (['manual', 'mismatch', 'duplicate', 'notfound', 'visual', 'notloaded'].includes(e.status) && state.reviews.get(reviewKey(e)) !== 'verified') || state.reviews.get(reviewKey(e)) === 'issue')
+      .sort(reviewTableOrder);
     state.jbRows = rows;
-    let h = '<thead><tr><th>Status</th><th>ROMC item</th><th>Value</th><th>Found in</th><th>Notes</th><th></th></tr></thead><tbody>';
-    if (!rows.length) h += `<tr><td colspan="6" class="none">${issuesOnly ? 'No open issues. Untick “Issues only” to see every serial.' : 'No serial-like values found in the reference document.'}</td></tr>`;
+    let h = '<thead><tr><th>Status</th><th>Source field</th><th>Value</th><th>Review target</th><th>Found in</th><th>Notes</th><th></th></tr></thead><tbody>';
+    if (!rows.length) h += `<tr><td colspan="7" class="none">${issuesOnly ? 'No open reviews. Untick “Issues only” to see every field.' : 'No populated ROMC or SIF fields found.'}</td></tr>`;
     rows.forEach((e, k) => {
       const found = e.found.map(f => `<div class="${e.expected.includes(f.i) ? 'exp' : ''}">${esc(state.docs[f.i].short)} <span class="src">${f.pages.slice(0, 4).map(pn => openLink(f.i, pn, e.value, 'p.' + pn)).join(', ')}${f.pages.length > 4 ? '…' : ''}</span></div>`).join('') || '<span class="none">—</span>';
       const mark = state.reviews.get(reviewKey(e));
-      const badge = mark ? `<div><span class="mark mark-${mark}">${mark === 'verified' ? '✓ Verified' : '⚠ Issue'}</span></div>` : '';
+      const note = state.reviewNotes.get(reviewKey(e));
+      const issue = noteDetails(note);
+      const badge = mark ? `<div><span class="mark mark-${mark}">${mark === 'verified' ? '✓ Verified' : '⚠ Issue'}</span>${issue.text ? `<div class="src">${esc(issue.text)}${esc(noteLabel(note))}</div>` : issue.document ? `<div class="src">Attached to ${esc(issue.document.name)}</div>` : ''}</div>` : '';
       h += `<tr${mark ? ` class="row-${mark}"` : ''}><td><span class="st st-${JB[e.status].c}">${JB[e.status].t}</span>${badge}</td>` +
-        `<td>${esc(e.label)}<div class="src">${openLink(jb.refIdx, e.page, e.value, 'ROMC p.' + e.page)}</div></td>` +
-        `<td><span class="chip ${JB[e.status].c}">${esc(e.value)}</span></td><td>${found}</td><td class="notes">${jbDetail(e)}</td>` +
+        `<td>${esc(e.sourceKind.toUpperCase())}: ${esc(e.label)}<div class="src">${openLink(e.sourceIdx, e.page, e.value, `${e.sourceKind.toUpperCase()} p.` + e.page)}</div></td>` +
+        `<td><span class="chip ${JB[e.status].c}">${esc(e.value)}</span></td><td>${esc(e.targetLabel)}</td><td>${found}</td><td class="notes">${jbDetail(e)}</td>` +
         `<td><button type="button" class="btn btn-small" data-review="${k}">Review</button></td></tr>`;
     });
     tbl.innerHTML = h + '</tbody>';
@@ -692,25 +835,36 @@
   function run() {
     setShortNames();
     autoPickReference();
-    const jbMode = state.mode === 'jobbook';
-    document.querySelectorAll('[data-mode]').forEach(el => { el.hidden = el.dataset.mode !== state.mode; });
-    if (jbMode) { compareJobBook(); renderJobBook(); } else { compareFields(); renderFields(); }
-    $('snc-csv').disabled = jbMode ? !(state.jb && state.jb.entries.length) : !state.rowsB.length;
+    compareJobBook();
+    renderJobBook();
+    $('snc-csv').disabled = !(state.jb && state.jb.entries.length);
+    $('snc-issues-csv').disabled = !state.jb || !state.jb.entries.some(e => state.reviews.get(reviewKey(e)) === 'issue');
+    $('snc-issues-pdf').disabled = $('snc-issues-csv').disabled;
+    $('snc-snapshot').disabled = !state.docs.some(d => !d.error && sourceKind(d));
+    renderCompare();
   }
 
   function renderDocs() {
     setShortNames();
     autoPickReference();
-    $('snc-docs').innerHTML = state.docs.map((d, i) => {
+    const loaded = state.docs.map((d, i) => {
       if (d.error) return `<li><strong>${esc(d.name)}</strong> <span class="err">Could not read: ${esc(d.error)}</span> <button class="btn btn-small" data-rm="${i}">Remove</button></li>`;
       const scanned = d.pages.filter(p => !p.hasText).length;
       const textInfo = scanned === 0 ? 'text' : scanned === d.numPages ? '<span class="warn-text">scanned – no text</span>' : `<span class="warn-text">${scanned} of ${d.numPages} pages scanned</span>`;
-      return `<li><label class="ref" title="Use as reference (master) document"><input type="radio" name="snc-ref" value="${i}" ${i === state.refIdx ? 'checked' : ''}> Reference</label>
+      return `<li class="doc-row"><label class="ref" title="Use as reference (master) document"><input type="radio" name="snc-ref" value="${i}" ${i === state.refIdx ? 'checked' : ''}> Reference</label>
         <span class="docname" title="${esc(d.name)}">${openLink(i, 1, '', esc(d.short))}</span>
         <span class="meta">${d.numPages} p · ${d.fieldList.length} fields · ${textInfo}</span>
         <details data-i="${i}"><summary class="meta">Text &amp; fields</summary></details>
         <button class="btn btn-small" data-rm="${i}">Remove</button></li>`;
-    }).join('');
+    });
+    const missing = documentTypes.filter(type => type.required(state.docs) && !state.docs.some(doc => !doc.error && type.re.test(doc.name))).map(type => {
+      const ignored = isDocTypeIgnored(type);
+      const toggle = `<label class="doc-ignore"><input type="checkbox" data-ignore-type="${esc(type.key)}"${ignored ? ' checked' : ''}> Ignore for this site</label>`;
+      return ignored
+        ? `<li class="doc-row doc-ignored"><strong>Ignored: ${esc(type.label)}</strong><span>Not used at this site, so it is not required.</span>${toggle}</li>`
+        : `<li class="doc-row doc-missing"><strong>Missing: ${esc(type.label)}</strong><span>Add this required job-book document.</span>${toggle}</li>`;
+    });
+    $('snc-docs').innerHTML = loaded.concat(missing).join('');
   }
 
   function showProgress(msg) { $('snc-progress').textContent = msg || ''; }
@@ -789,6 +943,15 @@
     removeStoredDocument(removed.id).then(saveSession).catch(e => console.warn('Could not update saved PDFs:', e));
   });
   $('snc-docs').addEventListener('change', e => {
+    const key = e.target.dataset && e.target.dataset.ignoreType;
+    if (key) {
+      const set = new Set(state.ignoredDocTypes);
+      if (e.target.checked) set.add(key); else set.delete(key);
+      state.ignoredDocTypes = [...set];
+      renderDocs();
+      saveSession().catch(err => console.warn('Could not save ignored document types:', err));
+      return;
+    }
     if (e.target.name !== 'snc-ref') return;
     state.refIdx = +e.target.value; state.refAuto = false;
     run();
@@ -807,7 +970,7 @@
   }, true);
 
   $('snc-clear').addEventListener('click', () => {
-    viewer.reset(); state.docs = []; state.refIdx = -1; state.refAuto = true; renderDocs(); run();
+    viewer.reset(); state.docs = []; state.refIdx = -1; state.refAuto = true; state.ignoredDocTypes = []; renderDocs(); run();
     clearStoredDocuments().catch(e => console.warn('Could not clear saved PDFs:', e));
   });
 
@@ -825,26 +988,108 @@
     if (e.found.length) return { doc: e.found[0].i, page: e.found[0].pages[0], hl: e.value, sure: true };
     return null;
   }
+  function targetIndexFor(group, key) {
+    const ix = group.targets.findIndex(e => reviewKey(e) === key);
+    return ix < 0 ? 0 : ix;
+  }
+  function firstOpenTarget(group) {
+    const ix = group.targets.findIndex(e => state.reviews.get(reviewKey(e)) !== 'verified');
+    return ix < 0 ? 0 : ix;
+  }
+  function reviewGroups(scope = state.reviewScope) {
+    const groups = state.jb && state.jb.groups || [];
+    return scope === 'all' ? groups : groups.filter(group => group.entry.sourceKind === scope);
+  }
+  function rememberReviewPosition(entry, scope) {
+    state.reviewPosition = { scope, field: fieldKey(entry), target: reviewKey(entry) };
+    saveSession().catch(e => console.warn('Could not save review position:', e));
+  }
+  function resumeReview(scope = state.reviewScope) {
+    const groups = reviewGroups(scope);
+    if (!groups.length) return;
+    state.reviewScope = scope;
+    const hasPosition = state.reviewPosition && (!state.reviewPosition.scope || state.reviewPosition.scope === scope);
+    let groupIndex = hasPosition ? groups.findIndex(g => g.key === state.reviewPosition.field) : -1;
+    if (groupIndex < 0) groupIndex = groups.findIndex(g => g.targets.some(e => state.reviews.get(reviewKey(e)) !== 'verified'));
+    if (groupIndex < 0) groupIndex = 0;
+    const group = groups[groupIndex];
+    const targetIndex = hasPosition ? targetIndexFor(group, state.reviewPosition.target) : firstOpenTarget(group);
+    openReviewGroup(groupIndex, targetIndex, scope);
+  }
+  function nextUnresolvedReview(groupIndex, targetIndex, scope = state.reviewScope) {
+    const groups = reviewGroups(scope);
+    if (!groups.length) return;
+    const current = groups[groupIndex];
+    for (let ti = targetIndex + 1; ti < current.targets.length; ti++) {
+      if (state.reviews.get(reviewKey(current.targets[ti])) !== 'verified') return openReviewGroup(groupIndex, ti, scope);
+    }
+    for (let offset = 1; offset <= groups.length; offset++) {
+      const gi = (groupIndex + offset) % groups.length;
+      if (gi === groupIndex) break;
+      const group = groups[gi];
+      const ti = group.targets.findIndex(e => state.reviews.get(reviewKey(e)) !== 'verified');
+      if (ti >= 0) return openReviewGroup(gi, ti, scope);
+    }
+    for (let ti = 0; ti < targetIndex; ti++) {
+      if (state.reviews.get(reviewKey(current.targets[ti])) !== 'verified') return openReviewGroup(groupIndex, ti, scope);
+    }
+    // Everything is verified; keep the current field open rather than closing the review.
+    openReviewGroup(groupIndex, targetIndex, scope);
+  }
+  function openReviewGroup(groupIndex, targetIndex, scope = state.reviewScope) {
+    const groups = reviewGroups(scope);
+    const group = groups[groupIndex];
+    if (!group) return;
+    state.reviewScope = scope;
+    targetIndex = Math.max(0, Math.min(targetIndex || 0, group.targets.length - 1));
+    const entry = group.targets[targetIndex];
+    rememberReviewPosition(entry, scope);
+    viewer.open({
+      title: `<strong>${esc(group.entry.sourceKind.toUpperCase())}: ${esc(group.entry.label)}</strong> <span class="chip ${JB[entry.status].c}">${esc(group.entry.value)}</span>`,
+      left: { doc: group.entry.sourceIdx, page: group.entry.page, hl: [group.entry.label, group.entry.value], rect: group.entry.rect, sure: true },
+      targets: group.targets.map(target => ({
+        label: target.targetLabel, right: reviewTarget(target),
+        status: state.reviews.get(reviewKey(target)) || null,
+      })),
+      targetIndex,
+      documents: viewerDocuments(),
+      tip: reviewTip(entry),
+      mark: { key: reviewKey(entry), status: state.reviews.get(reviewKey(entry)) || null, note: noteDetails(state.reviewNotes.get(reviewKey(entry))).text, noteDocument: noteDetails(state.reviewNotes.get(reviewKey(entry))).document },
+      step: { index: groupIndex, total: groups.length },
+      onTarget: index => openReviewGroup(groupIndex, index, scope),
+      onNextUnresolved: () => nextUnresolvedReview(groupIndex, targetIndex, scope),
+    });
+  }
   function openReview(k) {
     const e = state.jbRows[k];
     if (!e) return;
+    const groups = reviewGroups('all');
+    const groupIndex = groups.findIndex(group => group.key === fieldKey(e));
+    if (groupIndex >= 0) return openReviewGroup(groupIndex, targetIndexFor(groups[groupIndex], reviewKey(e)), 'all');
     viewer.open({
-      title: `<span class="st st-${JB[e.status].c}">${JB[e.status].t}</span> <strong>${esc(e.label)}</strong> <span class="chip ${JB[e.status].c}">${esc(e.value)}</span>`,
-      left: { doc: state.jb.refIdx, page: e.page, hl: e.value, sure: true },
-      right: reviewTarget(e),
-      mark: { key: reviewKey(e), status: state.reviews.get(reviewKey(e)) || null },
-      step: { index: k, total: state.jbRows.length },
+      title: `<span class="st st-${JB[e.status].c}">${JB[e.status].t}</span> <strong>${esc(e.sourceKind.toUpperCase())}: ${esc(e.label)}</strong> <span class="chip ${JB[e.status].c}">${esc(e.value)}</span> <span class="src">→ ${esc(e.targetLabel)}</span>`,
+      left: { doc: e.sourceIdx, page: e.page, hl: [e.label, e.value], rect: e.rect, sure: true }, right: reviewTarget(e),
+      documents: viewerDocuments(),
+      tip: reviewTip(e),
+      mark: { key: reviewKey(e), status: state.reviews.get(reviewKey(e)) || null, note: noteDetails(state.reviewNotes.get(reviewKey(e))).text, noteDocument: noteDetails(state.reviewNotes.get(reviewKey(e))).document },
     });
   }
   const viewer = window.createSncViewer({
     getDocs: () => state.docs,
-    onMark: (key, status) => {
+    onMark: (key, status, note, noteDocument, preserveNote) => {
       if (status) state.reviews.set(key, status); else state.reviews.delete(key);
+      if (status === 'issue') {
+        if (note || noteDocument) state.reviewNotes.set(key, { text: note || '', document: noteDocument || null }); else state.reviewNotes.delete(key);
+      } else if (!preserveNote) state.reviewNotes.delete(key);
       saveReviews();
+      saveSession().catch(e => console.warn('Could not save review progress:', e));
       renderJobBook(true); // same rows while the viewer is open, so "Next item" stays predictable
     },
     onClose: () => renderJobBook(),
-    onStep: k => openReview(k),
+    onStep: k => {
+      const groups = reviewGroups();
+      if (groups[k]) openReviewGroup(k, firstOpenTarget(groups[k]));
+    },
   });
   $('snc').addEventListener('click', e => {
     const a = e.target.closest('a.open');
@@ -856,23 +1101,197 @@
     }
     const r = e.target.closest('[data-review]');
     if (r) openReview(+r.dataset.review);
+    if (e.target.closest('[data-start-review]')) resumeReview();
+  });
+  $('snc').addEventListener('change', e => {
+    const skipKey = e.target.dataset && e.target.dataset.skip;
+    if (skipKey && skipKey in state.skip) {
+      state.skip[skipKey] = e.target.checked;
+      saveSession().catch(err => console.warn('Could not save skip options:', err));
+      run();
+      return;
+    }
+    if (e.target.id !== 'snc-review-scope') return;
+    state.reviewScope = e.target.value;
+    saveSession().catch(err => console.warn('Could not save review scope:', err));
+    renderJobBook();
   });
   document.querySelectorAll('input[name="snc-mode"]').forEach(r => r.addEventListener('change', e => { state.mode = e.target.value; run(); }));
 
   let timer;
   ['snc-usefields', 'snc-usetext', 'snc-mintwo', 'snc-ignorecase', 'snc-ignoresep', 'snc-fieldfilter',
-   'snc-aliases', 'snc-rules', 'snc-jbrules', 'snc-skip', 'snc-issuesonly', 'snc-vuifirst'].forEach(id =>
-    $(id).addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 250); }));
+   'snc-aliases', 'snc-rules', 'snc-issuesonly'].forEach(id =>
+    $(id) && $(id).addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 250); }));
+
+  // =====================================================================
+  // Job book answers snapshot (CSV export) and comparison with a previous job book
+  // =====================================================================
+  const SNAP_HEADER = ['Source', 'Section', 'Field name', 'Label', 'Value', 'State', 'Page', 'Category', 'Review', 'Issue note', 'Document'];
+  const csvCell = s => `"${String(s == null ? '' : s).replace(/"/g, '""')}"`;
+  // Category lets the comparison ignore fields that are expected to change (dates always).
+  function fieldCategory(field, value) {
+    if (isDateField(field, value)) return 'date';
+    if (isInitialsField(field)) return 'initials';
+    if (isCompanyField(field)) return 'company';
+    if (isPersonNameField(field)) return 'name';
+    if (value && isYesNoValue(value)) return 'yesno';
+    return '';
+  }
+  function snapshotRows() {
+    const byField = new Map();
+    if (state.jb) for (const e of state.jb.entries) {
+      const rk = reviewKey(e), mark = state.reviews.get(rk) || 'pending';
+      const note = mark === 'issue' ? noteDetails(state.reviewNotes.get(rk)).text : '';
+      const cur = byField.get(fieldKey(e)) || { marks: [], notes: [] };
+      cur.marks.push(mark); if (note) cur.notes.push(note);
+      byField.set(fieldKey(e), cur);
+    }
+    const rows = [];
+    for (const d of state.docs) {
+      const kind = sourceKind(d);
+      if (!kind || d.error) continue;
+      const seen = new Map();
+      const add = (f, value, blank) => {
+        const base = `${kind}|${f.name}`, n = seen.get(base) || 0;
+        seen.set(base, n + 1);
+        const r = blank ? null : byField.get(fieldKey({ sourceId: d.id || d.name, name: f.name, label: f.label, value, page: f.page }));
+        rows.push({
+          key: `${base}#${n}`, source: kind.toUpperCase(), section: f.section || '', name: f.name, label: f.label || '', value,
+          state: blank ? 'Blank' : isNA(value) ? 'N/A' : 'Populated', page: f.page, category: fieldCategory(f, value),
+          review: r ? (r.marks.includes('issue') ? 'issue' : r.marks.every(x => x === 'verified') ? 'verified' : 'pending') : '',
+          note: r ? r.notes.join(' | ') : '', document: d.name,
+        });
+      };
+      d.fieldList.forEach(f => add(f, String(f.value || '').trim(), false));
+      (d.blankFields || []).forEach(f => add(f, '', true));
+    }
+    return rows;
+  }
+  function parseCsv(text) {
+    const rows = [];
+    let row = [], cell = '', quoted = false;
+    text = text.replace(/^﻿/, '');
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (quoted) {
+        if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else quoted = false; } else cell += c;
+      } else if (c === '"') quoted = true;
+      else if (c === ',') { row.push(cell); cell = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cell); cell = ''; rows.push(row); row = []; }
+      else cell += c;
+    }
+    if (cell || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+  function baselineFromCsv(text) {
+    const table = parseCsv(text).filter(r => r.some(c => c !== ''));
+    const header = table.shift() || [];
+    const col = name => header.indexOf(name);
+    if (['Source', 'Field name', 'State', 'Value'].some(name => col(name) < 0)) throw new Error('This is not a job book answers CSV. Use "Export answers CSV" from a finished job book.');
+    const seen = new Map();
+    return table.map(r => {
+      const get = name => (col(name) >= 0 ? r[col(name)] : '') || '';
+      const base = `${get('Source').toLowerCase()}|${get('Field name')}`, n = seen.get(base) || 0;
+      seen.set(base, n + 1);
+      return { key: `${base}#${n}`, source: get('Source'), section: get('Section'), name: get('Field name'), label: get('Label'), value: get('Value'), state: get('State'), page: get('Page'), category: get('Category') };
+    });
+  }
+  function loadBaseline() {
+    try { const saved = JSON.parse(localStorage.getItem('snc-compare-baseline') || 'null'); if (saved && Array.isArray(saved.rows)) state.baseline = saved; } catch (e) { /* storage unavailable */ }
+  }
+  function saveBaseline() {
+    try {
+      if (state.baseline) localStorage.setItem('snc-compare-baseline', JSON.stringify(state.baseline)); else localStorage.removeItem('snc-compare-baseline');
+    } catch (e) { console.warn('Could not store the comparison CSV:', e); }
+  }
+  const SKIP_FOR_CATEGORY = { initials: 'initials', name: 'names', company: 'company', yesno: 'yesno' };
+  function compareSnapshots(prev, cur) {
+    const prevMap = new Map(prev.map(r => [r.key, r])), curMap = new Map(cur.map(r => [r.key, r]));
+    const count = rows => ({ total: rows.length, populated: rows.filter(r => r.state === 'Populated').length, na: rows.filter(r => r.state === 'N/A').length, blank: rows.filter(r => r.state === 'Blank').length });
+    const diffs = { blankNow: [], filledNow: [], naNow: [], valueNow: [], changed: [], onlyCurrent: [], onlyPrevious: [] };
+    for (const r of cur) {
+      const p = prevMap.get(r.key);
+      if (!p) { diffs.onlyCurrent.push({ r }); continue; }
+      if (r.category === 'date' || p.category === 'date') continue; // dates always change
+      if (r.state !== p.state) {
+        if (r.state === 'Blank') diffs.blankNow.push({ r, p });
+        else if (p.state === 'Blank') diffs.filledNow.push({ r, p });
+        else if (r.state === 'N/A') diffs.naNow.push({ r, p });
+        else diffs.valueNow.push({ r, p });
+      } else if (r.state === 'Populated') {
+        const cat = r.category || p.category;
+        if (cat && SKIP_FOR_CATEGORY[cat] && state.skip[SKIP_FOR_CATEGORY[cat]]) continue;
+        if (alnum(r.value) !== alnum(p.value)) diffs.changed.push({ r, p });
+      }
+    }
+    for (const p of prev) if (!curMap.has(p.key)) diffs.onlyPrevious.push({ p });
+    return { prev: count(prev), cur: count(cur), diffs };
+  }
+  function renderCompare() {
+    const box = $('snc-compare-summary'), nameEl = $('snc-compare-name'), clearBtn = $('snc-compare-clear');
+    if (!box) return;
+    const b = state.baseline;
+    nameEl.textContent = b ? `${b.name} (${b.rows.length} fields)` : 'No comparison CSV loaded';
+    clearBtn.hidden = !b;
+    if (!b) { box.innerHTML = ''; return; }
+    const cur = snapshotRows();
+    if (!cur.length) { box.innerHTML = '<p class="src">Load a job book (ROMC / SIF) to compare it with the CSV.</p>'; return; }
+    const c = compareSnapshots(b.rows, cur);
+    const delta = (a, z) => { const d = z - a; return d === 0 ? '0' : (d > 0 ? '+' : '') + d; };
+    const metric = (label, key) => `<tr><td>${label}</td><td>${c.prev[key]}</td><td>${c.cur[key]}</td><td>${delta(c.prev[key], c.cur[key])}</td></tr>`;
+    const list = (title, items, fmt) => {
+      if (!items.length) return `<div class="cmp-line cmp-zero">${title}: <strong>0</strong></div>`;
+      const shown = items.slice(0, 300);
+      return `<details class="cmp-line"><summary>${title}: <strong>${items.length}</strong></summary><ul>${shown.map(i => `<li>${fmt(i)}</li>`).join('')}${items.length > shown.length ? `<li class="src">…and ${items.length - shown.length} more</li>` : ''}</ul></details>`;
+    };
+    const lbl = r => `<strong>${esc(r.source)}</strong> ${esc(r.label || r.name)}`;
+    const val = r => r.state === 'Populated' ? `“${esc(r.value)}”` : r.state;
+    const move = i => `${lbl(i.r)}: ${val(i.p)} → ${val(i.r)}`;
+    const d = c.diffs;
+    box.innerHTML = `<table class="cmp-table"><thead><tr><th></th><th>Previous</th><th>Current</th><th>Change</th></tr></thead><tbody>${metric('Fields', 'total')}${metric('Populated', 'populated')}${metric('N/A', 'na')}${metric('Blank', 'blank')}</tbody></table>` +
+      list('Blank now, was filled or N/A', d.blankNow, move) +
+      list('Filled now, was blank', d.filledNow, move) +
+      list('N/A now, was filled', d.naNow, move) +
+      list('Filled now, was N/A', d.valueNow, move) +
+      list('Different value', d.changed, move) +
+      list('Only in this job book', d.onlyCurrent, i => lbl(i.r)) +
+      list('Only in the comparison CSV', d.onlyPrevious, i => lbl(i.p)) +
+      '<p class="src">Date fields are ignored. Initials, names, company and Yes/No answers follow the Skip toggles above for the “Different value” list.</p>';
+  }
+  $('snc-compare-file').addEventListener('change', async e => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      state.baseline = { name: file.name, savedAt: new Date().toISOString(), rows: baselineFromCsv(await file.text()) };
+      saveBaseline();
+      renderCompare();
+    } catch (err) { showProgress(err.message || String(err)); }
+  });
+  $('snc-compare-clear').addEventListener('click', () => { state.baseline = null; saveBaseline(); renderCompare(); });
+  $('snc-snapshot').addEventListener('click', () => {
+    const rows = snapshotRows();
+    if (!rows.length) return;
+    const lines = [SNAP_HEADER.map(csvCell).join(',')].concat(rows.map(r =>
+      [r.source, r.section, r.name, r.label, r.value, r.state, r.page, r.category, r.review, r.note, r.document].map(csvCell).join(',')));
+    const wtg = (state.docs.map(d => /wtg[_\s-]*(\d{4,})/i.exec(d.name)).find(Boolean) || [])[1];
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));
+    a.download = `job-book-answers${wtg ? '-WTG' + wtg : ''}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
 
   $('snc-csv').addEventListener('click', () => {
     const q = s => `"${String(s).replace(/"/g, '""')}"`;
     const lines = [];
     if (state.mode === 'jobbook' && state.jb) {
-      lines.push(['Status', 'ROMC item', 'Value', 'ROMC page', 'Found in', 'Notes', 'Review'].map(q).join(','));
+      lines.push(['Status', 'Source', 'Field', 'Value', 'Source page', 'Review target', 'Found in', 'Notes', 'Review', 'Issue note', 'Issue note document'].map(q).join(','));
       for (const e of state.jb.entries) {
-        lines.push([JB[e.status].t, e.label, e.value, e.page,
+        const issue = state.reviews.get(reviewKey(e)) === 'issue' ? noteDetails(state.reviewNotes.get(reviewKey(e))) : { text: '', document: null };
+        lines.push([JB[e.status].t, e.sourceKind.toUpperCase(), e.label, e.value, e.page, e.targetLabel,
           e.found.map(f => `${state.docs[f.i].short} p.${f.pages.join('/')}`).join('; '),
-          jbDetail(e).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&'), state.reviews.get(reviewKey(e)) || ''].map(q).join(','));
+          jbDetail(e).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&'), state.reviews.get(reviewKey(e)) || '', issue.text, issue.document?.name || ''].map(q).join(','));
       }
       if (state.jb.extra.length) {
         lines.push('', ['Not in ROMC', 'Document', 'Value', 'Page', 'Context'].map(q).join(','));
@@ -890,7 +1309,75 @@
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
+  $('snc-issues-csv').addEventListener('click', () => {
+    if (!state.jb) return;
+    const xml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+    const row = cells => `<Row>${cells.map(cell => `<Cell><Data ss:Type="String">${xml(cell)}</Data></Cell>`).join('')}</Row>`;
+    const rows = [row(['Source', 'Field', 'Value', 'Source page', 'Review target', 'Found in', 'Issue note', 'Attached document'])];
+    for (const e of state.jb.entries.filter(entry => state.reviews.get(reviewKey(entry)) === 'issue')) {
+      const issue = noteDetails(state.reviewNotes.get(reviewKey(e)));
+      rows.push(row([e.sourceKind.toUpperCase(), e.label, e.value, e.page, e.targetLabel,
+        e.found.map(f => `${state.docs[f.i].short} p.${f.pages.join('/')}`).join('; '), issue.text, issue.document?.name || '']));
+    }
+    const workbook = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="header"><Font ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Issues"><Table>${rows[0].replace('<Row>', '<Row ss:StyleID="header">')}${rows.slice(1).join('')}</Table></Worksheet></Workbook>`;
+    const blob = new Blob([workbook], { type: 'application/vnd.ms-excel' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `job-book-issues-${new Date().toISOString().slice(0, 10)}.xml`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+  $('snc-issues-pdf').addEventListener('click', () => {
+    if (!state.jb || !window.jspdf) return alert('The PDF report library did not load. Please check your connection and try again.');
+    const { jsPDF } = window.jspdf;
+    const issues = state.jb.entries.filter(entry => state.reviews.get(reviewKey(entry)) === 'issue');
+    const pdf = new jsPDF({ unit: 'pt', format: 'letter' });
+    const left = 48, right = 564, bottom = 742;
+    let y = 0;
+    const header = (continued = false) => {
+      pdf.setFillColor(25, 49, 79); pdf.rect(0, 0, 612, 78, 'F');
+      pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(20); pdf.text('Job Book Issues Report', left, 35);
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.text(`${issues.length} active issue${issues.length === 1 ? '' : 's'}  •  Generated ${new Date().toLocaleString()}${continued ? '  •  Continued' : ''}`, left, 55);
+      pdf.setTextColor(32, 42, 56); y = 104;
+    };
+    const pageBreak = height => { if (y + height <= bottom) return; pdf.addPage(); header(true); };
+    const field = (label, value) => {
+      const lines = pdf.splitTextToSize(value || '—', right - left - 110);
+      const height = Math.max(15, lines.length * 12) + 5;
+      pageBreak(height);
+      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8); pdf.setTextColor(89, 103, 120); pdf.text(label.toUpperCase(), left + 12, y + 10);
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(32, 42, 56); pdf.text(lines, left + 120, y + 10);
+      y += height;
+    };
+    header();
+    issues.forEach((entry, index) => {
+      const issue = noteDetails(state.reviewNotes.get(reviewKey(entry)));
+      const title = `${index + 1}. ${entry.sourceKind.toUpperCase()} — ${entry.label}`;
+      const titleLines = pdf.splitTextToSize(title, right - left - 24);
+      const estimate = 42 + titleLines.length * 12 + 80;
+      pageBreak(estimate);
+      pdf.setFillColor(245, 247, 250); pdf.roundedRect(left, y, right - left, 27 + titleLines.length * 12, 4, 4, 'F');
+      pdf.setDrawColor(204, 67, 57); pdf.setLineWidth(3); pdf.line(left, y + 2, left, y + 25 + titleLines.length * 12);
+      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11); pdf.setTextColor(32, 42, 56); pdf.text(titleLines, left + 12, y + 17);
+      y += 36 + titleLines.length * 12;
+      field('Value', entry.value);
+      field('Review target', entry.targetLabel);
+      field('Source page', `Page ${entry.page}`);
+      field('Found in', entry.found.map(f => `${state.docs[f.i].short} — page ${f.pages.join(', ')}`).join('; '));
+      field('Attached document', issue.document?.name || '—');
+      field('Issue note', issue.text || 'No note entered');
+      y += 14;
+    });
+    const total = pdf.getNumberOfPages();
+    for (let page = 1; page <= total; page++) {
+      pdf.setPage(page); pdf.setDrawColor(220, 225, 231); pdf.line(left, 760, right, 760);
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(89, 103, 120);
+      pdf.text('Bench • Job Book Review', left, 775); pdf.text(`Page ${page} of ${total}`, right, 775, { align: 'right' });
+    }
+    pdf.save(`job-book-issues-${new Date().toISOString().slice(0, 10)}.pdf`);
+  });
 
+  loadBaseline();
   run();
   restoreDocuments();
 })();

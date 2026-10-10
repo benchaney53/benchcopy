@@ -1,0 +1,123 @@
+JOB BOOK REVIEW (folder: pdf-serial-crosscheck) — CONTINUATION NOTES
+Last updated: 2026-10-10
+Current local build: v1.3.31
+
+READ THIS FIRST
+- This is a browser-only Job Book Review tool. PDFs and review progress stay on the user's device; PDFs are never uploaded.
+- The working directory is tools/pdf-serial-crosscheck/.
+- The local preview URL is normally http://localhost:4173/tools/pdf-serial-crosscheck/.
+- Do not commit, push, open a pull request, publish, or discard existing work unless the user explicitly asks in the current conversation.
+- The repository may already contain unrelated user changes. Preserve them.
+- IMPORTANT: Whenever you change this tool, update this file in the same change. Record the version, date, files changed, behavior changed, and validation performed. Tell any subagent or collaborating agent to do the same.
+
+PRODUCT GOAL
+The tool supports a complete Job Book Review. It is not ROMC-only: ROMC, SIF, and future job-book source types should use the same guided review experience. A reviewer works through fields one at a time, sees the source field and the required comparison target, and marks each target Verified or Issue.
+
+CURRENT REVIEW RULES
+- Review every populated, non-N/A field in ROMC and SIF. Skip toggles on the launch card (state.skip, persisted in the session): Dates (default ON), Initials, Names, Company, Yes/No answers (default OFF). Skipped fields never enter the review queue.
+- One source form field is one field even if its value has commas, semicolons, ampersands, or several serial-like pieces. Punctuation must never create additional reviews.
+- Create another review only for a distinct verification target: a different document or a different required area in the same document.
+- Repeated appearances within one target area do not create additional reviews.
+- Keep review marks and the current review location across refreshes.
+- Verified advances to the next unresolved target. Issue marks the item immediately and shows the optional note panel; the note autosaves (400 ms debounce, on document change, on step change/close) with no Save/Cancel buttons. Exactly one note per review item (keyed by reviewKey), editable at any time; notes are attached to a selected document. Removing an Issue hides its note from issue reports but preserves it for re-applying the Issue.
+- Issue exports are available as Excel-compatible XML and formatted PDF.
+
+CURRENT UX
+- The prominent "Start Job Book Review" card appears before Results.
+- It supports All job book fields, ROMC fields only, and SIF fields only. The chosen scope and review position are persisted.
+- The review overlay shows source on the left and target document/manual check on the right. It shows tabs if a source field has multiple required targets.
+- Each step has a target-specific tip.
+- Buttons show their keyboard shortcuts. Viewer controls support normal scrolling, Ctrl+wheel zoom, Shift+wheel horizontal pan, and middle-mouse drag panning.
+- Source-field highlights use the exact AcroForm rectangle when available; only the relevant source page should be highlighted.
+- Review order is source kind (ROMC then SIF) and then visual top-to-bottom, left-to-right within each PDF page.
+
+JOB BOOK ANSWERS CSV AND COMPARISON
+- "Export answers CSV" (button #snc-snapshot) writes every ROMC/SIF field: Source, Section, Field name, Label, Value, State (Populated / N/A / Blank), Page, Category (date / initials / name / company / yesno / empty), Review (verified / issue / pending / empty when skipped), Issue note, Document.
+- Blank fields are recorded at extraction (doc.blankFields, text/choice fields only; checkboxes and radios are ignored). Older saved documents without blankFields are re-extracted once on restore.
+- The compare card (above Review status) uploads a previous answers CSV (#snc-compare-file). It is kept in localStorage key snc-compare-baseline and compared with the loaded job book by Source + Field name + occurrence.
+- Summary: Fields / Populated / N/A / Blank counts (previous vs current) plus lists: blank now, filled now, N/A now, filled from N/A, different value, only in current, only in previous. Dates are always ignored; initials/names/company/yes-no follow the Skip toggles for the different-value list.
+
+PERSISTENCE AND VIEWER RELIABILITY
+- Original PDF blobs, extracted text, form fields, source rectangles, selected reference, review position, and review scope are saved in IndexedDB (database: snc-persisted-documents).
+- Older persisted documents lacking source rectangles are re-extracted once after restore.
+- Review marks and notes are stored in browser localStorage, keyed to the reference document.
+- viewer.js retains active pdf.js document leases so cache eviction cannot destroy an open viewer document. Do not remove this protection without an equivalent lifecycle solution.
+- pdf.js uses the standard-font data URL to reduce harmless missing-font warnings. Embedded-font "TT" warnings can still occur and are usually not the cause of a failed highlight.
+
+KEY FILES
+- index.html: page structure, styles, version tag, cache-busted script URLs.
+- script.js: document ingestion/extraction, IndexedDB persistence, target rules, Job Book Review queue, exports, and UI rendering.
+- viewer.js: overlay, PDF rendering/cache, highlights, review controls, keyboard and pointer interactions.
+- tool.json: tool metadata.
+
+VERSIONING
+- Bump the visible version in index.html for each user-facing change.
+- Update both viewer.js?v=... and script.js?v=... cache-busting URLs to the same version.
+- Current version: v1.3.31.
+
+VALIDATION BASELINE
+- Run: node --check tools/pdf-serial-crosscheck/script.js
+- Run: node --check tools/pdf-serial-crosscheck/viewer.js
+- Run: git diff --check (existing CRLF warnings may appear; investigate actual whitespace errors).
+- Confirm the local preview serves the new visible version and relevant markup.
+- For viewer/persistence/highlight changes, load real PDFs, refresh, reopen a review, and confirm both the source and target PDF render with the expected highlights.
+
+RECENT CHANGE LOG
+2026-10-10 — v1.3.31
+- Renamed the tool's display name from PDF Serial Cross-Check to Job Book Review (page title, heading, version tag, issues PDF footer, tool.json, manifest). Folder and id stay pdf-serial-crosscheck so URLs and saved data are unchanged.
+- Updated: index.html, script.js, viewer.js (comment), tool.json, tools/tools-manifest.json, this file.
+
+2026-10-10 — site-level change (no tool version bump)
+- Hidden tools: tool.json supports "hidden": true. job-book-checker, new-run-test-tool and run-test-tool are hidden; only PDF Form Field Checker, PDF Form Filler and Job Book Review are listed. home.html hides them unless the URL has ?show=hidden or BENCH (capital letters) is typed on home.html (remembered for the browser tab via sessionStorage); the sidebar (assets/sidebar.js) never lists hidden tools. No link points to this. Direct tool URLs still work.
+- tools/tools-manifest.json regenerated (run: PYTHONIOENCODING=utf-8 python generate-manifest.py); manifest fetches now use cache: 'no-cache'.
+- Updated: tools/*/tool.json (3), tools/tools-manifest.json, home.html, assets/sidebar.js, this file. Verified in the preview with and without ?show=hidden.
+
+2026-10-10 — v1.3.30
+- Added Export answers CSV, a compare-CSV upload card and a small differences summary (see JOB BOOK ANSWERS CSV AND COMPARISON).
+- Extraction now also records blank form fields (blankFields); storedDoc/restore updated, old stored docs re-extracted once.
+- Updated: script.js, index.html, this file.
+- Validated: node --check; loaded the real SIF PDF from Documents.zip in the preview (1978 fields: 440 populated, 1538 N/A, 43 blank), exported the CSV, edited it and re-uploaded as the comparison: counts, blank/filled/N/A transitions and value changes were detected and the date change ignored. Console clean.
+- Note: matching uses the AcroForm field name; if the next job book is a different form revision, unmatched fields appear under Only in this job book / Only in the comparison CSV.
+
+2026-10-10 — v1.3.29
+- Added Skip toggles to the Start Job Book Review card: Dates (default on, restores the earlier behavior and lets dates be reviewed when off), Initials, Names (person/signatory labels, not site/turbine/component names), Company (company/contractor/manufacturer/supplier/etc.) and Yes/No answers. Persisted with the session; changing one rebuilds the queue.
+- Detection is by field name/label (value for Yes/No and dates), see shouldSkipField in script.js. Review position may shift when toggles change.
+- Updated: script.js, index.html, this file. Validated node --check; not yet tested with real PDFs.
+
+2026-10-10 — v1.3.28
+- Styled the note panel's "Attach to document" select to match the theme (inset background, themed border/text/options) instead of the browser default.
+- Updated: index.html (CSS, version), this file. Not visually verified in the app.
+
+2026-10-10 — v1.3.27
+- Issue notes now autosave; removed Save issue / Cancel buttons. Clicking Issue (or pressing I) marks the issue at once and opens the single note box; pressing I again focuses it. Esc in the note box just leaves it. One note per review item; removing the Issue still preserves the note for re-applying.
+- Updated: viewer.js (note logic), index.html (version), this file. Validated node --check; not yet tested interactively with real PDFs.
+
+2026-10-10 — v1.3.26
+- Removed the filename check: no more "Name needs attention" warning and no suggested filenames on missing-document rows. The exact naming convention is still undecided (real names look like Pad_T-017_WTG_255174-Rescue_Kit_Inspection.pdf; see Documents.zip) and should be implemented once confirmed. The suggested: field in documentTypes is now unused.
+- Updated: index.html (version), script.js, this file. Validated node --check.
+
+2026-10-10 — v1.3.25
+- Fixed startup crash ("Cannot read properties of null (reading 'addEventListener')") that stopped script.js before restoreDocuments() ran, so saved PDFs never reloaded. Cause: index.html no longer has the Field-compare/option controls (snc-usefields, snc-mintwo, snc-fieldfilter, snc-aliases, snc-issuesonly) but script.js still read them.
+- script.js now reads those options via null-safe checked()/textOf() helpers with the old defaults; the input-listener loop skips absent elements. renderFields() (Field compare) is dead code and is not called from run().
+- Updated: index.html (version/cache-bust), script.js, this file. Validated node --check and a clean console on load.
+
+2026-10-10 — v1.3.24
+- Every document type in the Review Guide (incl. Service Lift and Aviation Light Manual) is now required by default.
+- Each missing-document row has an "Ignore for this site" checkbox; ignored rows are greyed/struck through instead of removed. Choice persists in the saved session (IndexedDB, ignoredDocTypes) and resets on Clear.
+- Updated: index.html (version, CSS), script.js, this file. (Started by Codex; completed by Claude.)
+- Validated JavaScript syntax; see below for preview check.
+
+2026-10-10 — v1.3.23
+- Made Start Job Book Review a prominent launch card above Results.
+- Added All job-book fields, ROMC-only, and SIF-only scopes.
+- Generalized the guided review queue so SIF fields work like ROMC fields, including multi-target tabs and progress/resume behavior.
+- Persisted selected review scope with the saved session.
+- Updated: index.html, script.js, this file.
+- Validated JavaScript syntax, diff whitespace, and local preview serving v1.3.23.
+
+2026-10-10 — v1.3.22
+- Fixed viewer highlight/render failures caused by PDF cache eviction destroying still-open pdf.js documents.
+- Added active viewer document leases, safer rendering error handling, and standard font data configuration.
+
+2026-10-10 — v1.3.8 through v1.3.21
+- Added document persistence, review marks/notes, issue exports, guided target tabs, exact source highlights, per-step tips, keyboard controls, zoom/pan, and top-to-bottom ordering.
