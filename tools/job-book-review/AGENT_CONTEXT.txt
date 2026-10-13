@@ -1,6 +1,6 @@
 JOB BOOK REVIEW — CONTINUATION NOTES
 Last updated: 2026-10-10
-Current local build: v1.3.67
+Current local build: v1.3.68
 
 READ THIS FIRST
 - This is a browser-only Job Book Review tool. PDFs and review progress stay on the user's device; PDFs are never uploaded.
@@ -54,7 +54,7 @@ KEY FILES
 VERSIONING
 - Bump the visible version in index.html for each user-facing change.
 - Update both viewer.js?v=... and script.js?v=... cache-busting URLs to the same version.
-- Current version: v1.3.67.
+- Current version: v1.3.68.
 
 VALIDATION BASELINE
 - Run: node --check tools/job-book-review/script.js
@@ -64,6 +64,11 @@ VALIDATION BASELINE
 - For viewer/persistence/highlight changes, load real PDFs, refresh, reopen a review, and confirm both the source and target PDF render with the expected highlights.
 
 RECENT CHANGE LOG
+2026-10-13 — v1.3.68
+- Added Job-Book-Review-Quick-Guide.pdf (11 pages; screenshots of v1.3.67 made with the real Pad T-017 documents) to this folder and linked it from the tool page: a centred "Open the illustrated PDF guide" link under the page description and a second link inside the "How to use this tool" box. It is a static file: rebuild it from new screenshots if the UI changes. It shows real project data and is public once pushed (decision made by the user).
+- A Pad / WTG number confirmation + auto-check feature (v1.3.68-v1.3.70 in a working copy) was tried and then scratched by the user; it was never committed.
+- Updated: index.html (links, CSS, version), the PDF, this file.
+
 2026-10-13 — v1.3.67
 - Added a very simple in-tool "How to use this tool" guide (details#snc-howto above step 1): six short steps (load, optional guide / serial list / compare CSV, start review, verify or issue, move between documents, save / export) plus a one-line key list. Open by default; closing it is remembered (localStorage snc-howto-open). Keep it in step with the tool when features change.
 - Updated: index.html (guide markup, CSS, version), script.js (remember open/closed), this file.

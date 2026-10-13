@@ -48,6 +48,9 @@
         .howto ol { margin: 10px 0 8px; padding-left: 22px; display: grid; gap: 6px; font-size: 14px; line-height: 1.45; }
         .howto li strong { color: var(--heading); }
         .howto .howto-keys { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+        .guide-link { text-align: center; margin: -10px 0 16px; font-size: 14px; }
+        .guide-link a, .howto a { color: var(--accent); font-weight: 600; }
+        .guide-link span { color: var(--muted); font-size: 12px; }
         .howto kbd { display: inline-block; padding: 0 5px; margin: 0 1px; border: 1px solid var(--line); border-radius: 4px; background: var(--inset); color: var(--fg); font: 600 11px/18px ui-monospace, Consolas, monospace; }
 
         .container {
@@ -328,6 +331,7 @@
 
     <h1>Job Book Review</h1>
     <p class="description">Review populated ROMC and SIF fields against their required job-book records. Files are read in your browser and never uploaded.</p>
+    <p class="guide-link"><a href="Job-Book-Review-Quick-Guide.pdf" target="_blank" rel="noopener">Open the illustrated PDF guide</a> <span>(11 pages, with screenshots)</span></p>
 
     <details class="howto" id="snc-howto" open>
         <summary>How to use this tool</summary>
@@ -340,6 +344,7 @@
             <li><strong>Save your work.</strong> <em>Export CSV</em> saves all answers. <em>Export issues</em> (Excel or PDF) lists only the items marked Issue.</li>
         </ol>
         <p class="howto-keys"><strong>Keys in the review:</strong> <kbd>P</kbd>/<kbd>&uarr;</kbd> previous &middot; <kbd>N</kbd>/<kbd>&darr;</kbd> next &middot; <kbd>V</kbd> verify &middot; <kbd>I</kbd> issue &middot; <kbd>U</kbd> clear &middot; <kbd>Space</kbd> next open &middot; <kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd> zoom &middot; <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> pan &middot; <kbd>Esc</kbd> close</p>
+        <p class="howto-keys">Want pictures? <a href="Job-Book-Review-Quick-Guide.pdf" target="_blank" rel="noopener">Open the illustrated PDF guide</a>, with a screenshot for every step.</p>
     </details>
 
     <div class="container" id="snc">
@@ -429,13 +434,13 @@ Hub serial | hub[^\n]{0,40}?(?:serial\s*(?:no\.?|number|#)|s\/n)\s*[:#.]?\s*((?=
             </details>
         </div>
     </div>
-    <div class="version-tag">Job Book Review v1.3.67</div>
+    <div class="version-tag">Job Book Review v1.3.68</div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="viewer.js?v=1.3.67"></script>
-    <script src="script.js?v=1.3.67"></script>
+    <script src="viewer.js?v=1.3.68"></script>
+    <script src="script.js?v=1.3.68"></script>
     <script>
         // Theme toggle (shared bench convention: localStorage 'theme', dark default)
         (function () {
