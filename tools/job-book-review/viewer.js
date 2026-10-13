@@ -430,6 +430,9 @@
       if (capSel) { capSel.el.remove(); capSel = null; }
     }
     function drawSel() {
+      const w = Math.abs(capSel.x1 - capSel.x0), h = Math.abs(capSel.y1 - capSel.y0), top = Math.min(capSel.y0, capSel.y1);
+      capSel.el.dataset.size = `${Math.round(w)} \u00d7 ${Math.round(h)}`;
+      capSel.el.classList.toggle('label-in', top < 26);
       Object.assign(capSel.el.style, {
         left: Math.min(capSel.x0, capSel.x1) + 'px', top: Math.min(capSel.y0, capSel.y1) + 'px',
         width: Math.abs(capSel.x1 - capSel.x0) + 'px', height: Math.abs(capSel.y1 - capSel.y0) + 'px',
@@ -442,7 +445,7 @@
       e.preventDefault();
       const r = box.getBoundingClientRect();
       const el = document.createElement('div');
-      el.className = 'pane-capture-capSel';
+      el.className = 'pane-capture-sel';
       box.appendChild(el);
       capSel = { box, el, x0: clampTo(e.clientX - r.left, r.width), y0: clampTo(e.clientY - r.top, r.height) };
       capSel.x1 = capSel.x0; capSel.y1 = capSel.y0;

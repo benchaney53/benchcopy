@@ -1,6 +1,6 @@
 JOB BOOK REVIEW — CONTINUATION NOTES
 Last updated: 2026-10-10
-Current local build: v1.3.64
+Current local build: v1.3.66
 
 READ THIS FIRST
 - This is a browser-only Job Book Review tool. PDFs and review progress stay on the user's device; PDFs are never uploaded.
@@ -54,7 +54,7 @@ KEY FILES
 VERSIONING
 - Bump the visible version in index.html for each user-facing change.
 - Update both viewer.js?v=... and script.js?v=... cache-busting URLs to the same version.
-- Current version: v1.3.64.
+- Current version: v1.3.66.
 
 VALIDATION BASELINE
 - Run: node --check tools/job-book-review/script.js
@@ -64,6 +64,14 @@ VALIDATION BASELINE
 - For viewer/persistence/highlight changes, load real PDFs, refresh, reopen a review, and confirm both the source and target PDF render with the expected highlights.
 
 RECENT CHANGE LOG
+2026-10-13 — v1.3.66
+- Fixed: the Attach area selection rectangle was invisible while dragging (since v1.3.43) because an earlier rename edit changed its class to pane-capture-capSel, so the .pane-capture-sel CSS never applied. The class is correct again and the highlight is stronger: solid orange border, orange tint, the rest of the pane dimmed, a live width x height label, and a dashed orange outline on every pane while selection mode is armed.
+- Updated: viewer.js, index.html, this file.
+
+2026-10-10 — v1.3.65
+- The serial list check now names the OTHER towers a value is listed under: "Also listed for: <towers>" (value is on this job's pad AND elsewhere - green pill) or "Listed for: <towers>" (only elsewhere - amber pill), as an amber line under the pill/description in the review header, under the chip in the review table, and in a "Serial other towers" CSV column. Item numbers are generic parts, so they never add towers. Whole-cell matches are preferred over "contains" matches when deciding the towers, so a short value inside longer cells does not list unrelated towers.
+- Updated: script.js, index.html, this file.
+
 2026-10-10 — v1.3.64
 - The matching row's description now sits on its own line under the header pill instead of wrapping beside it.
 - Validated v1.3.63/64 with the real ROMC + SIF + AlleCat Serial Numbers.xlsx: pill states green / amber (different pad, with the row's description) / red; launch card "88 found, 2 on a different pad, 23 not found"; the issues PDF built from one issue contains only that issue (value, review target, source page, found in, attached document, note) with no serial-list text.

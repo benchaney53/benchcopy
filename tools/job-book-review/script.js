@@ -718,8 +718,10 @@
     const search = piece => {
       const q = alnum(piece);
       if (q.length < 4 || !/\d/.test(q)) return null;
-      const hits = keys.filter(k => (q.length >= 5 ? k[0].includes(q) : k[0] === q));
-      return hits.length ? hits : null;
+      const all = keys.filter(k => (q.length >= 5 ? k[0].includes(q) : k[0] === q));
+      if (!all.length) return null;
+      const exact = all.filter(k => k[0] === q);
+      return exact.length ? exact : all;
     };
     // a match is right for this job when it is an item number, its tower names no pad, or the pad is this job's pad
     const onThisPad = hit => hit[2] === itemCol || !pad || towerCol < 0 || !towerPadNumber(list.rows[hit[1]][towerCol]) || towerPadNumber(list.rows[hit[1]][towerCol]) === pad;
@@ -750,15 +752,17 @@
     const descCol = list.headers.findIndex(h => /^description$/i.test(h));
     const rowDescription = c => { const hit = c.hits && (c.hits.find(onThisPad) || c.hits[0]); return hit && descCol >= 0 ? list.rows[hit[1]][descCol] : ''; };
     const description = status === 'missing' ? '' : [...new Set(checks.map(rowDescription).filter(Boolean))].slice(0, 2).join(' / ');
-    const result = { status, found: status !== 'missing', ...SERIAL_RESULT[status], text: detail, description };
+    // towers (other than this job's pad) the value is also listed under; item numbers are generic parts, so they never count
+    const others = status === 'missing' ? '' : [...new Set(checks.flatMap(c => (c.hits || []).filter(h => !onThisPad(h)).map(h => String(list.rows[h[1]][towerCol] || 'no tower').replace(/^Alle-Cat\s*-\s*/i, ''))))].slice(0, 4).join(', ');
+    const result = { status, found: status !== 'missing', ...SERIAL_RESULT[status], text: status === 'found' && others ? `${detail}. Also listed for ${others}.` : detail, description, others };
     memo.set(memoKey, result);
     return result;
   }
   const serialCheck = entry => (!state.serials || entry.pageReview || (entry.sourceKind !== 'romc' && entry.sourceKind !== 'sif')) ? null : serialCheckRaw(entry.label, entry.value);
-  const serialChip = entry => { const c = serialCheck(entry); return c ? `<span class="chip ${c.cls}" title="${esc(c.text)}">${c.chip}</span>${c.description ? `<div class="src">${esc(c.description)}</div>` : ''}` : ''; };
+  const serialChip = entry => { const c = serialCheck(entry); return c ? `<span class="chip ${c.cls}" title="${esc(c.text)}">${c.chip}</span>${c.description ? `<div class="src">${esc(c.description)}</div>` : ''}${c.others ? `<div class="src">${c.status === 'other' ? 'Listed for' : 'Also listed for'}: ${esc(c.others)}</div>` : ''}` : ''; };
   // The small indicator in the review header.
   const SERIAL_PILL = { found: ['yes', 'In serial list'], other: ['warn', 'In list – different pad'], missing: ['no', 'Not in serial list'] };
-  const serialPill = entry => { const c = serialCheck(entry); return c ? ` <span class="serial-pill ${SERIAL_PILL[c.status][0]}" title="${esc(c.text)}">${SERIAL_PILL[c.status][1]}</span>${c.description ? ` <span class="serial-desc">${esc(c.description)}</span>` : ''}` : ''; };
+  const serialPill = entry => { const c = serialCheck(entry); return c ? ` <span class="serial-pill ${SERIAL_PILL[c.status][0]}" title="${esc(c.text)}">${SERIAL_PILL[c.status][1]}</span>${c.description ? ` <span class="serial-desc">${esc(c.description)}</span>` : ''}${c.others ? ` <span class="serial-others">${c.status === 'other' ? 'Listed for' : 'Also listed for'}: ${esc(c.others)}</span>` : ''}` : ''; };
   function serialSummary(entries) {
     if (!state.serials) return null;
     const counts = { found: 0, other: 0, missing: 0 }, seen = new Set();
@@ -1575,7 +1579,7 @@
   // =====================================================================
   // Job book answers snapshot (CSV export) and comparison with a previous job book
   // =====================================================================
-  const SNAP_HEADER = ['Source', 'Section', 'Field name', 'Label', 'Value', 'State', 'Page', 'Category', 'Review', 'Issue note', 'Document', 'Serial list', 'Serial description'];
+  const SNAP_HEADER = ['Source', 'Section', 'Field name', 'Label', 'Value', 'State', 'Page', 'Category', 'Review', 'Issue note', 'Document', 'Serial list', 'Serial description', 'Serial other towers'];
   const csvCell = s => `"${String(s == null ? '' : s).replace(/"/g, '""')}"`;
   // Category lets the comparison ignore fields that are expected to change (dates always).
   function fieldCategory(field, value) {
@@ -1612,6 +1616,7 @@
           review: r ? (r.marks.includes('issue') ? 'issue' : r.marks.every(x => x === 'verified') ? 'verified' : 'pending') : '',
           note: r ? r.notes.join(' | ') : '', document: d.name, docIndex, rect: f.rect,
           serialDescription: ((kind === 'romc' || kind === 'sif') && !blank ? (serialCheckRaw(f.label, value) || {}).description : '') || '',
+          serialOthers: ((kind === 'romc' || kind === 'sif') && !blank ? (serialCheckRaw(f.label, value) || {}).others : '') || '',
           serial: (kind === 'romc' || kind === 'sif') && !blank ? ((c => (c ? c.chip.toLowerCase() : ''))(serialCheckRaw(f.label, value))) : '',
         });
       };
@@ -1747,7 +1752,7 @@
     const rows = snapshotRows();
     if (!rows.length) return;
     const lines = [SNAP_HEADER.map(csvCell).join(',')].concat(rows.map(r =>
-      [r.source, r.section, r.name, r.label, r.value, r.state, r.page, r.category, r.review, r.note, r.document, r.serial, r.serialDescription].map(csvCell).join(',')));
+      [r.source, r.section, r.name, r.label, r.value, r.state, r.page, r.category, r.review, r.note, r.document, r.serial, r.serialDescription, r.serialOthers].map(csvCell).join(',')));
     const wtg = (state.docs.map(d => /wtg[_\s-]*(\d{4,})/i.exec(d.name)).find(Boolean) || [])[1];
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));
