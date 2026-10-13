@@ -1845,6 +1845,12 @@
     pdf.save(`job-book-issues-${new Date().toISOString().slice(0, 10)}.pdf`);
   });
 
+  // The how-to guide at the top stays open until someone closes it, then remembers that.
+  const howto = $('snc-howto');
+  if (howto) {
+    try { howto.open = localStorage.getItem('snc-howto-open') !== '0'; } catch (e) { /* ignore */ }
+    howto.addEventListener('toggle', () => { try { localStorage.setItem('snc-howto-open', howto.open ? '1' : '0'); } catch (e) { /* ignore */ } });
+  }
   loadBaseline();
   renderGuideCard();
   run();

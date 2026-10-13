@@ -1,6 +1,6 @@
 JOB BOOK REVIEW — CONTINUATION NOTES
 Last updated: 2026-10-10
-Current local build: v1.3.66
+Current local build: v1.3.67
 
 READ THIS FIRST
 - This is a browser-only Job Book Review tool. PDFs and review progress stay on the user's device; PDFs are never uploaded.
@@ -54,7 +54,7 @@ KEY FILES
 VERSIONING
 - Bump the visible version in index.html for each user-facing change.
 - Update both viewer.js?v=... and script.js?v=... cache-busting URLs to the same version.
-- Current version: v1.3.66.
+- Current version: v1.3.67.
 
 VALIDATION BASELINE
 - Run: node --check tools/job-book-review/script.js
@@ -64,6 +64,10 @@ VALIDATION BASELINE
 - For viewer/persistence/highlight changes, load real PDFs, refresh, reopen a review, and confirm both the source and target PDF render with the expected highlights.
 
 RECENT CHANGE LOG
+2026-10-13 — v1.3.67
+- Added a very simple in-tool "How to use this tool" guide (details#snc-howto above step 1): six short steps (load, optional guide / serial list / compare CSV, start review, verify or issue, move between documents, save / export) plus a one-line key list. Open by default; closing it is remembered (localStorage snc-howto-open). Keep it in step with the tool when features change.
+- Updated: index.html (guide markup, CSS, version), script.js (remember open/closed), this file.
+
 2026-10-13 — v1.3.66
 - Fixed: the Attach area selection rectangle was invisible while dragging (since v1.3.43) because an earlier rename edit changed its class to pane-capture-capSel, so the .pane-capture-sel CSS never applied. The class is correct again and the highlight is stronger: solid orange border, orange tint, the rest of the pane dimmed, a live width x height label, and a dashed orange outline on every pane while selection mode is armed.
 - Updated: viewer.js, index.html, this file.
